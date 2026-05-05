@@ -1,0 +1,109 @@
+Build a professional web application called **“LLI Client Location Intelligence App”**.
+
+## Purpose
+
+This app is used by a business owner (LLI) to quickly show:
+
+* How many clients we have in a specific city or locality
+* Which clients are near the current location
+* Visual client distribution on a map during meetings
+
+## Tech Stack
+
+* Frontend: React (Vite) + modern UI (clean, minimal, professional)
+* Backend: Java Spring Boot (REST API)
+* Data Source: Google Sheets (read-only for now)
+* Maps: Google Maps JavaScript API
+
+## Core Features
+
+### 1. Dashboard UI (Mobile + Desktop Friendly)
+
+* Left sidebar:
+
+  * App title: “LLI Client Map”
+  * Search bar (city / area / pin code)
+  * Button: “Use My Current Location”
+  * Stats cards:
+
+    * Total clients in selected city
+    * Total clients in selected locality
+  * List of nearest clients (with distance)
+
+* Right side:
+
+  * Google Map
+  * Show:
+
+    * User current location (blue marker)
+    * Client locations (red markers)
+  * Click marker → show client details popup
+
+### 2. Client Data Structure
+
+Each client has:
+
+* companyCode
+* companyName
+* city
+* state
+* pinCode
+* latitude
+* longitude
+* fieldPerson
+* status
+
+### 3. Backend (Spring Boot)
+
+* Create API:
+  GET /api/clients
+* Fetch data from Google Sheet (or dummy data for now)
+* Return JSON list of clients
+
+### 4. Map Features
+
+* Load all client markers
+* Cluster markers if many clients
+* Highlight nearby clients based on user location
+* Calculate and show distance (km)
+
+### 5. Search + Filtering
+
+* Search by:
+
+  * City
+  * Area / Pin Code
+* Show:
+
+  * Total count
+  * Filtered client list
+
+### 6. UX/UI Requirements
+
+* Clean, modern UI (like SaaS dashboard)
+* Rounded cards, soft shadows
+* Minimal color palette (black, white, grey + accent color)
+* Smooth interactions
+
+### 7. Future Scope (keep architecture ready)
+
+* Add database (PostgreSQL)
+* Add login system
+* Add client segmentation
+* Add route planning
+
+## Important Notes
+
+* This app is READ-ONLY (no data entry required)
+* Focus on performance for 1000+ clients
+* Mobile usability is important (boss will use on phone)
+
+## Output
+
+Generate:
+
+1. React frontend structure
+2. Spring Boot backend structure
+3. API integration
+4. Map integration with Google Maps
+5. Clean UI components
