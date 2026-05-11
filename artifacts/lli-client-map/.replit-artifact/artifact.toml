@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "LLI Client Map"
+version = "1.0.0"
+id = "artifacts/lli-client-map"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18232
+
+[services.development]
+run = "pnpm --filter @workspace/lli-client-map run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/lli-client-map", "run", "build" ]
+publicDir = "artifacts/lli-client-map/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18232"
+BASE_PATH = "/"

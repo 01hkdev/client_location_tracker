@@ -1,0 +1,546 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useListClients, useGetNearbyClients, useGetClientStats } from "@workspace/api-client-react";
+import { Search, MapPin, Navigation, Users, Building2, TrendingUp, X, Loader2 } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
+
+declare global {
+  interface Window {
+    google: typeof google;
+  }
+}
+
+type Client = {
+  id: number;
+  companyCode: string;
+  companyName: string;
+  city: string;
+  state: string;
+  pinCode: string;
+  latitude: number;
+  longitude: number;
+  fieldPerson: string;
+  status: string;
+  createdAt?: string;
+};
+
+type ClientWithDistance = Client & { distanceKm: number };
+
+const STATUS_COLORS: Record<string, string> = {
+  active: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  inactive: "bg-gray-100 text-gray-600 border-gray-200",
+  prospect: "bg-amber-100 text-amber-800 border-amber-200",
+};
+
+function StatusBadge({ status }: { status: string }) {
+  const cls = STATUS_COLORS[status] ?? "bg-blue-100 text-blue-800 border-blue-200";
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide border ${cls}`}>
+      {status}
+    </span>
+  );
+}
+
+function ClientCard({ client, onClick, selected, distance }: {
+  client: Client;
+  onClick: () => void;
+  selected: boolean;
+  distance?: number;
+}) {
+  return (
+    <button
+      data-testid={`client-card-${client.id}`}
+      onClick={onClick}
+      className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all duration-150 mb-1.5 ${
+        selected
+          ? "border-amber-400 bg-amber-900/20"
+          : "border-transparent hover:border-slate-600 hover:bg-slate-800"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-slate-100 truncate leading-tight">{client.companyName}</p>
+          <p className="text-xs text-slate-500 mt-0.5 font-mono">{client.companyCode}</p>
+          <div className="flex items-center gap-1.5 mt-1">
+            <MapPin className="h-3 w-3 text-slate-500 shrink-0" />
+            <span className="text-xs text-slate-400 truncate">{client.city}, {client.state}</span>
+          </div>
+          <p className="text-xs text-slate-500 mt-0.5">{client.fieldPerson}</p>
+        </div>
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+          <StatusBadge status={client.status} />
+          {distance !== undefined && (
+            <span className="text-[11px] font-semibold text-amber-400 tabular-nums">
+              {distance.toFixed(1)} km
+            </span>
+          )}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+let mapsScriptPromise: Promise<void> | null = null;
+function loadGoogleMaps(apiKey: string): Promise<void> {
+  if (window.google?.maps) return Promise.resolve();
+  if (mapsScriptPromise) return mapsScriptPromise;
+  mapsScriptPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Google Maps failed to load"));
+    document.head.appendChild(script);
+  });
+  return mapsScriptPromise;
+}
+
+export default function MapPage() {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [committedSearch, setCommittedSearch] = useState("");
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [mapReady, setMapReady] = useState(false);
+  const [mobileTab, setMobileTab] = useState<"list" | "map">("map");
+
+  const mapRef = useRef<HTMLDivElement>(null);
+  const googleMapRef = useRef<google.maps.Map | null>(null);
+  const markersRef = useRef<google.maps.Marker[]>([]);
+  const userMarkerRef = useRef<google.maps.Marker | null>(null);
+  const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
+  const clustererRef = useRef<import("@googlemaps/markerclusterer").MarkerClusterer | null>(null);
+
+  const filterParams = committedSearch
+    ? /^\d{6}$/.test(committedSearch.trim())
+      ? { pinCode: committedSearch.trim() }
+      : { city: committedSearch.trim() }
+    : {};
+
+  const { data: clients, isLoading: clientsLoading } = useListClients(filterParams);
+  const { data: stats, isLoading: statsLoading } = useGetClientStats();
+  const { data: nearbyClients, isLoading: nearbyLoading } = useGetNearbyClients(
+    { lat: userLocation?.lat ?? 0, lng: userLocation?.lng ?? 0, radius: 50 },
+    { query: { enabled: !!userLocation } }
+  );
+
+  const displayClients: (Client | ClientWithDistance)[] = userLocation
+    ? (nearbyClients ?? [])
+    : (clients ?? []);
+
+  // Draw markers — defined before the effects that call it
+  const updateMarkers = useCallback(async (
+    displayList: (Client | ClientWithDistance)[],
+    selected: Client | null,
+    hasUserLoc: boolean
+  ) => {
+    if (!googleMapRef.current || !window.google?.maps) return;
+
+    if (clustererRef.current) {
+      clustererRef.current.clearMarkers();
+      clustererRef.current = null;
+    }
+    markersRef.current.forEach((m) => m.setMap(null));
+    markersRef.current = [];
+    if (!displayList.length) return;
+
+    const { MarkerClusterer } = await import("@googlemaps/markerclusterer");
+
+    const newMarkers = displayList.map((client) => {
+      const isNearby = hasUserLoc && "distanceKm" in client;
+      const isSelected = selected?.id === client.id;
+      const marker = new window.google.maps.Marker({
+        position: { lat: client.latitude, lng: client.longitude },
+        title: client.companyName,
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          scale: isSelected ? 11 : isNearby ? 8 : 7,
+          fillColor: isSelected ? "#f59e0b" : isNearby ? "#38bdf8" : "#1e3a5f",
+          fillOpacity: 1,
+          strokeColor: "#ffffff",
+          strokeWeight: 2,
+        },
+        zIndex: isSelected ? 100 : isNearby ? 50 : 10,
+      });
+
+      marker.addListener("click", () => {
+        setSelectedClient(client);
+        if (infoWindowRef.current && googleMapRef.current) {
+          const distHtml = "distanceKm" in client
+            ? `<div style="color:#d97706;font-weight:600;font-size:11px;margin-top:6px;">${(client as ClientWithDistance).distanceKm.toFixed(1)} km away</div>`
+            : "";
+          const sc = client.status;
+          const bg = sc === "active" ? "#d1fae5" : sc === "inactive" ? "#f3f4f6" : "#fef3c7";
+          const fg = sc === "active" ? "#065f46" : sc === "inactive" ? "#4b5563" : "#92400e";
+          infoWindowRef.current.setContent(`
+            <div style="font-family:Inter,system-ui,sans-serif;padding:6px 4px;min-width:200px;max-width:240px;">
+              <div style="font-weight:700;font-size:14px;color:#0f1e35;line-height:1.3;margin-bottom:3px;">${client.companyName}</div>
+              <div style="font-size:11px;color:#6b7280;font-family:monospace;margin-bottom:8px;">${client.companyCode}</div>
+              <div style="font-size:12px;color:#374151;margin-bottom:3px;"><span style="color:#9ca3af;">City</span>&nbsp;${client.city}, ${client.state}</div>
+              <div style="font-size:12px;color:#374151;margin-bottom:3px;"><span style="color:#9ca3af;">PIN</span>&nbsp;${client.pinCode}</div>
+              <div style="font-size:12px;color:#374151;margin-bottom:8px;"><span style="color:#9ca3af;">Field</span>&nbsp;${client.fieldPerson}</div>
+              <span style="background:${bg};color:${fg};padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;">${client.status}</span>
+              ${distHtml}
+            </div>
+          `);
+          infoWindowRef.current.open(googleMapRef.current, marker);
+        }
+      });
+
+      return marker;
+    });
+
+    markersRef.current = newMarkers;
+    clustererRef.current = new MarkerClusterer({ map: googleMapRef.current, markers: newMarkers });
+  }, []);
+
+  // Load Google Maps script
+  useEffect(() => {
+    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
+    loadGoogleMaps(apiKey).then(() => setMapReady(true)).catch(console.error);
+  }, []);
+
+  // Initialize map after script loads
+  useEffect(() => {
+    if (!mapReady || googleMapRef.current) return;
+
+    function initMap() {
+      if (!mapRef.current || googleMapRef.current) return;
+      const map = new window.google.maps.Map(mapRef.current, {
+        center: { lat: 20.5937, lng: 78.9629 },
+        zoom: 5,
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: false,
+        styles: [
+          { featureType: "water", elementType: "geometry", stylers: [{ color: "#c9e8f5" }] },
+          { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#f5f5f5" }] },
+          { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
+          { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#ebebeb" }] },
+          { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#c5cdd7" }] },
+          { featureType: "poi", stylers: [{ visibility: "off" }] },
+          { featureType: "transit", stylers: [{ visibility: "off" }] },
+          { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#a0adb8" }, { weight: 1.5 }] },
+          { featureType: "administrative.province", elementType: "geometry.stroke", stylers: [{ color: "#b8c4ce" }, { weight: 1 }] },
+        ],
+      });
+      googleMapRef.current = map;
+      infoWindowRef.current = new window.google.maps.InfoWindow();
+      window.google.maps.event.trigger(map, "resize");
+    }
+
+    // Use two rAFs to ensure the DOM has painted and elements have dimensions
+    requestAnimationFrame(() => requestAnimationFrame(initMap));
+  }, [mapReady]);
+
+  // Re-draw markers when clients, selection, or location changes
+  useEffect(() => {
+    if (!mapReady || !googleMapRef.current) return;
+    updateMarkers(displayClients, selectedClient, !!userLocation);
+  }, [displayClients, selectedClient, userLocation, mapReady, updateMarkers]);
+
+  // Update user location marker
+  useEffect(() => {
+    if (!mapReady || !googleMapRef.current || !window.google?.maps) return;
+    if (userMarkerRef.current) {
+      userMarkerRef.current.setMap(null);
+      userMarkerRef.current = null;
+    }
+    if (userLocation) {
+      userMarkerRef.current = new window.google.maps.Marker({
+        position: userLocation,
+        map: googleMapRef.current,
+        title: "Your Location",
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          scale: 11,
+          fillColor: "#6366f1",
+          fillOpacity: 1,
+          strokeColor: "#ffffff",
+          strokeWeight: 3,
+        },
+        zIndex: 999,
+      });
+      googleMapRef.current.panTo(userLocation);
+      googleMapRef.current.setZoom(10);
+    }
+  }, [userLocation, mapReady]);
+
+  // Pan map to selected client
+  useEffect(() => {
+    if (selectedClient && googleMapRef.current) {
+      googleMapRef.current.panTo({ lat: selectedClient.latitude, lng: selectedClient.longitude });
+      const z = googleMapRef.current.getZoom() ?? 5;
+      if (z < 8) googleMapRef.current.setZoom(8);
+    }
+  }, [selectedClient]);
+
+  const handleGetLocation = () => {
+    if (!navigator.geolocation) { setLocationError("Geolocation not supported."); return; }
+    setLocationLoading(true);
+    setLocationError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setLocationLoading(false);
+        setCommittedSearch("");
+        setSearchQuery("");
+      },
+      () => {
+        setLocationError("Unable to get location. Please allow access.");
+        setLocationLoading(false);
+      }
+    );
+  };
+
+  const handleSearch = () => {
+    setCommittedSearch(searchQuery);
+    setUserLocation(null);
+  };
+
+  const handleClearLocation = () => {
+    setUserLocation(null);
+    if (googleMapRef.current) {
+      googleMapRef.current.setCenter({ lat: 20.5937, lng: 78.9629 });
+      googleMapRef.current.setZoom(5);
+    }
+  };
+
+  const cityCount = committedSearch && !userLocation ? (clients?.length ?? 0) : 0;
+
+  const sidebar = (
+    <div className="flex flex-col h-full bg-[#0d1929] text-slate-100 overflow-hidden">
+      {/* Header */}
+      <div className="px-4 pt-5 pb-4 border-b border-slate-800 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-amber-400 flex items-center justify-center shrink-0">
+            <MapPin className="h-5 w-5 text-slate-900" />
+          </div>
+          <div>
+            <h1 className="text-[16px] font-bold text-white leading-tight">LLI Client Map</h1>
+            <p className="text-[10px] text-slate-500 mt-0.5 uppercase tracking-widest">Location Intelligence</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Search */}
+      <div className="px-3 py-3 shrink-0 border-b border-slate-800 space-y-2">
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500 pointer-events-none" />
+            <input
+              data-testid="input-search"
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+              placeholder="City, area, or PIN code..."
+              className="w-full pl-8 pr-3 py-2 text-sm bg-slate-800 text-white placeholder:text-slate-500 border border-slate-700 rounded-lg focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/20 transition-all"
+            />
+          </div>
+          <button
+            data-testid="button-search"
+            onClick={handleSearch}
+            className="px-3 py-2 bg-amber-400 hover:bg-amber-300 text-slate-900 rounded-lg text-sm font-bold transition-colors shrink-0"
+          >
+            Go
+          </button>
+        </div>
+
+        {userLocation ? (
+          <button
+            data-testid="button-clear-location"
+            onClick={handleClearLocation}
+            className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-medium hover:bg-indigo-600/30 transition-colors"
+          >
+            <X className="h-3 w-3" />
+            Clear Location
+          </button>
+        ) : (
+          <button
+            data-testid="button-use-location"
+            onClick={handleGetLocation}
+            disabled={locationLoading}
+            className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+          >
+            {locationLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Navigation className="h-3.5 w-3.5" />}
+            {locationLoading ? "Getting Location..." : "Use My Current Location"}
+          </button>
+        )}
+        {locationError && <p className="text-[11px] text-red-400 px-1">{locationError}</p>}
+      </div>
+
+      {/* Stats */}
+      <div className="px-3 py-3 shrink-0 border-b border-slate-800">
+        {statsLoading ? (
+          <div className="grid grid-cols-2 gap-2">
+            <Skeleton className="h-[70px] rounded-xl bg-slate-800" />
+            <Skeleton className="h-[70px] rounded-xl bg-slate-800" />
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-2.5">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <Users className="h-3 w-3 text-amber-400" />
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Total</span>
+              </div>
+              <p className="text-2xl font-bold text-white tabular-nums">{stats?.total ?? 0}</p>
+              <p className="text-[10px] text-slate-500 mt-0.5">All clients</p>
+            </div>
+            {userLocation ? (
+              <div className="bg-indigo-900/30 border border-indigo-700/40 rounded-xl p-2.5">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <Navigation className="h-3 w-3 text-indigo-400" />
+                  <span className="text-[10px] text-indigo-400 uppercase tracking-wider font-semibold">Nearby</span>
+                </div>
+                {nearbyLoading
+                  ? <Loader2 className="h-5 w-5 animate-spin text-indigo-400 mt-1" />
+                  : <p className="text-2xl font-bold text-white tabular-nums">{nearbyClients?.length ?? 0}</p>}
+                <p className="text-[10px] text-slate-500 mt-0.5">within 50 km</p>
+              </div>
+            ) : committedSearch ? (
+              <div className="bg-amber-900/20 border border-amber-700/30 rounded-xl p-2.5">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <Building2 className="h-3 w-3 text-amber-400" />
+                  <span className="text-[10px] text-amber-400 uppercase tracking-wider font-semibold">Filtered</span>
+                </div>
+                {clientsLoading
+                  ? <Loader2 className="h-5 w-5 animate-spin text-amber-400 mt-1" />
+                  : <p className="text-2xl font-bold text-white tabular-nums">{cityCount}</p>}
+                <p className="text-[10px] text-slate-500 mt-0.5 truncate">{committedSearch}</p>
+              </div>
+            ) : (
+              <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-2.5">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <TrendingUp className="h-3 w-3 text-emerald-400" />
+                  <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Cities</span>
+                </div>
+                <p className="text-2xl font-bold text-white tabular-nums">{stats?.byCity.length ?? 0}</p>
+                <p className="text-[10px] text-slate-500 mt-0.5">Covered</p>
+              </div>
+            )}
+          </div>
+        )}
+        {!statsLoading && stats && stats.byStatus.length > 0 && (
+          <div className="flex gap-3 mt-2.5 flex-wrap">
+            {stats.byStatus.map((s) => (
+              <div key={s.status} className="flex items-center gap-1.5">
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${s.status === "active" ? "bg-emerald-400" : s.status === "inactive" ? "bg-slate-500" : "bg-amber-400"}`} />
+                <span className="text-[11px] text-slate-400 capitalize">{s.status}: <strong className="text-slate-300 font-semibold">{s.count}</strong></span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Client List */}
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="px-3 py-2 flex items-center justify-between shrink-0">
+          <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+            {userLocation ? "Nearby Clients" : committedSearch ? "Results" : "All Clients"}
+          </span>
+          {!clientsLoading && !nearbyLoading && (
+            <span className="text-[10px] text-slate-600 tabular-nums">{displayClients.length} shown</span>
+          )}
+        </div>
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="px-3 pb-4">
+            {(clientsLoading || nearbyLoading) ? (
+              Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-[72px] w-full rounded-lg mb-1.5 bg-slate-800" />
+              ))
+            ) : displayClients.length === 0 ? (
+              <div className="text-center py-10">
+                <MapPin className="h-9 w-9 text-slate-700 mx-auto mb-3" />
+                <p className="text-sm text-slate-500 font-medium">No clients found</p>
+                {committedSearch && <p className="text-[11px] text-slate-600 mt-1">Try a different search</p>}
+              </div>
+            ) : (
+              displayClients.map((client) => (
+                <ClientCard
+                  key={client.id}
+                  client={client}
+                  selected={selectedClient?.id === client.id}
+                  distance={"distanceKm" in client ? (client as ClientWithDistance).distanceKm : undefined}
+                  onClick={() => { setSelectedClient(client); setMobileTab("map"); }}
+                />
+              ))
+            )}
+          </div>
+        </ScrollArea>
+      </div>
+    </div>
+  );
+
+  const mapPanel = (
+    <div className="relative flex-1 h-full min-w-0">
+      {!mapReady && (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-100 z-20">
+          <div className="text-center">
+            <Loader2 className="h-8 w-8 animate-spin text-[#1e3a5f] mx-auto mb-2" />
+            <p className="text-sm text-slate-500">Loading map...</p>
+          </div>
+        </div>
+      )}
+      <div ref={mapRef} data-testid="map-container" style={{ position: "absolute", inset: 0 }} />
+
+      {/* Legend */}
+      <div className="absolute bottom-6 left-4 bg-white/95 backdrop-blur-sm border border-slate-200 rounded-xl p-3 shadow-lg text-xs z-10 pointer-events-none">
+        <p className="font-bold text-slate-700 text-[10px] uppercase tracking-widest mb-2">Legend</p>
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#1e3a5f] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">Client</span></div>
+          {userLocation && <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#38bdf8] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">Nearby</span></div>}
+          <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#f59e0b] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">Selected</span></div>
+          {userLocation && <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#6366f1] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">You</span></div>}
+        </div>
+      </div>
+
+      {/* Selected client overlay */}
+      {selectedClient && (
+        <div className="absolute top-4 right-4 bg-white/97 backdrop-blur-sm border border-slate-200 rounded-xl p-4 shadow-xl max-w-[240px] z-10">
+          <div className="flex items-start justify-between gap-2 mb-3">
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-slate-900 leading-tight">{selectedClient.companyName}</p>
+              <p className="text-[10px] text-slate-400 font-mono mt-0.5">{selectedClient.companyCode}</p>
+            </div>
+            <button data-testid="button-close-selected" onClick={() => setSelectedClient(null)} className="text-slate-400 hover:text-slate-700 transition-colors shrink-0">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-xs text-slate-600"><span className="font-semibold text-slate-800">City</span>&nbsp;{selectedClient.city}, {selectedClient.state}</p>
+            <p className="text-xs text-slate-600"><span className="font-semibold text-slate-800">PIN</span>&nbsp;{selectedClient.pinCode}</p>
+            <p className="text-xs text-slate-600"><span className="font-semibold text-slate-800">Field</span>&nbsp;{selectedClient.fieldPerson}</p>
+          </div>
+          <div className="mt-3"><StatusBadge status={selectedClient.status} /></div>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <>
+      {/* Desktop */}
+      <div className="hidden md:flex h-screen w-full overflow-hidden">
+        <div className="w-80 xl:w-96 h-full flex flex-col shrink-0 border-r border-slate-800">{sidebar}</div>
+        {mapPanel}
+      </div>
+
+      {/* Mobile */}
+      <div className="flex md:hidden flex-col h-screen w-full overflow-hidden">
+        <div className="flex bg-[#0d1929] border-b border-slate-800 shrink-0">
+          <button data-testid="tab-map" onClick={() => setMobileTab("map")} className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors ${mobileTab === "map" ? "text-amber-400 border-b-2 border-amber-400" : "text-slate-500"}`}>
+            <MapPin className="h-3.5 w-3.5" />&nbsp;Map
+          </button>
+          <button data-testid="tab-list" onClick={() => setMobileTab("list")} className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors ${mobileTab === "list" ? "text-amber-400 border-b-2 border-amber-400" : "text-slate-500"}`}>
+            <Users className="h-3.5 w-3.5" />&nbsp;Clients ({displayClients.length})
+          </button>
+        </div>
+        {mobileTab === "map"
+          ? <div className="flex-1 relative overflow-hidden">{mapPanel}</div>
+          : <div className="flex-1 overflow-hidden">{sidebar}</div>}
+      </div>
+    </>
+  );
+}

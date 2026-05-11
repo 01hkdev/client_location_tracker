@@ -3,13 +3,15 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: LLI Client Location Intelligence API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: clients
+    description: Client operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,112 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /clients:
+    get:
+      operationId: listClients
+      tags: [clients]
+      summary: List all clients
+      description: Returns all clients, optionally filtered by city, area, or pin code
+      parameters:
+        - name: city
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by city name (case-insensitive partial match)
+        - name: pinCode
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by pin code
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by client status
+      responses:
+        "200":
+          description: List of clients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Client"
+
+  /clients/nearby:
+    get:
+      operationId: getNearbyClients
+      tags: [clients]
+      summary: Get clients near a location
+      description: Returns clients near a given latitude/longitude within a radius
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema:
+            type: number
+          description: Latitude of the reference location
+        - name: lng
+          in: query
+          required: true
+          schema:
+            type: number
+          description: Longitude of the reference location
+        - name: radius
+          in: query
+          required: false
+          schema:
+            type: number
+          description: Radius in kilometers (default 10)
+      responses:
+        "200":
+          description: Nearby clients with distances
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClientWithDistance"
+
+  /clients/stats:
+    get:
+      operationId: getClientStats
+      tags: [clients]
+      summary: Get client statistics
+      description: Returns aggregated stats - totals by city, by status, and overall count
+      responses:
+        "200":
+          description: Client statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientStats"
+
+  /clients/{id}:
+    get:
+      operationId: getClient
+      tags: [clients]
+      summary: Get a single client
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Client details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+        "404":
+          description: Client not found
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +142,119 @@ components:
       required:
         - status
 
+    Client:
+      type: object
+      required:
+        - id
+        - companyCode
+        - companyName
+        - city
+        - state
+        - pinCode
+        - latitude
+        - longitude
+        - fieldPerson
+        - status
+      properties:
+        id:
+          type: integer
+        companyCode:
+          type: string
+        companyName:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        pinCode:
+          type: string
+        latitude:
+          type: number
+        longitude:
+          type: number
+        fieldPerson:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+
+    ClientWithDistance:
+      type: object
+      required:
+        - id
+        - companyCode
+        - companyName
+        - city
+        - state
+        - pinCode
+        - latitude
+        - longitude
+        - fieldPerson
+        - status
+        - distanceKm
+      properties:
+        id:
+          type: integer
+        companyCode:
+          type: string
+        companyName:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        pinCode:
+          type: string
+        latitude:
+          type: number
+        longitude:
+          type: number
+        fieldPerson:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+        distanceKm:
+          type: number
+
+    CityCount:
+      type: object
+      required:
+        - city
+        - count
+      properties:
+        city:
+          type: string
+        count:
+          type: integer
+
+    StatusCount:
+      type: object
+      required:
+        - status
+        - count
+      properties:
+        status:
+          type: string
+        count:
+          type: integer
+
+    ClientStats:
+      type: object
+      required:
+        - total
+        - byCity
+        - byStatus
+      properties:
+        total:
+          type: integer
+        byCity:
+          type: array
+          items:
+            $ref: "#/components/schemas/CityCount"
+        byStatus:
+          type: array
+          items:
+            $ref: "#/components/schemas/StatusCount"
