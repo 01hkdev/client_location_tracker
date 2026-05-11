@@ -10,8 +10,11 @@ import {
   GetClientResponse,
 } from "@workspace/api-zod";
 import { ilike, eq, sql } from "drizzle-orm";
+import { getClientsFromSheet, type SheetClient } from "../lib/googleSheets.js";
 
 const router: IRouter = Router();
+
+const USE_SHEET = !!process.env.GOOGLE_SHEET_ID && !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 
 function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371;
@@ -27,50 +30,84 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
   return R * c;
 }
 
+function sheetClientToApi(c: SheetClient) {
+  return {
+    id: c.id,
+    companyCode: c.companyCode,
+    companyName: c.companyName,
+    city: c.city,
+    state: c.state,
+    pinCode: c.pinCode,
+    latitude: c.latitude,
+    longitude: c.longitude,
+    fieldPerson: c.fieldPerson,
+    status: c.status,
+    createdAt: c.createdAt,
+  };
+}
+
 router.get("/clients", async (req, res): Promise<void> => {
   const parsed = ListClientsQueryParams.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-
   const { city, pinCode, status } = parsed.data;
 
-  let query = db.select().from(clientsTable).$dynamic();
-
-  if (city) {
-    query = query.where(ilike(clientsTable.city, `%${city}%`));
-  } else if (pinCode) {
-    query = query.where(eq(clientsTable.pinCode, pinCode));
-  } else if (status) {
-    query = query.where(eq(clientsTable.status, status));
+  if (USE_SHEET) {
+    try {
+      let clients = await getClientsFromSheet();
+      if (city) clients = clients.filter((c) => c.city.toLowerCase().includes(city.toLowerCase()));
+      else if (pinCode) clients = clients.filter((c) => c.pinCode === pinCode);
+      else if (status) clients = clients.filter((c) => c.status === status);
+      res.json(clients.map((c) => ListClientsResponseItem.parse(sheetClientToApi(c))));
+      return;
+    } catch (err) {
+      req.log.error({ err }, "Google Sheets fetch failed, falling back to DB");
+    }
   }
+
+  let query = db.select().from(clientsTable).$dynamic();
+  if (city) query = query.where(ilike(clientsTable.city, `%${city}%`));
+  else if (pinCode) query = query.where(eq(clientsTable.pinCode, pinCode));
+  else if (status) query = query.where(eq(clientsTable.status, status));
 
   const clients = await query;
   res.json(clients.map((c) => ListClientsResponseItem.parse({ ...c, createdAt: c.createdAt?.toISOString() })));
 });
 
-router.get("/clients/stats", async (_req, res): Promise<void> => {
+router.get("/clients/stats", async (req, res): Promise<void> => {
+  if (USE_SHEET) {
+    try {
+      const clients = await getClientsFromSheet();
+      const cityMap: Record<string, number> = {};
+      const statusMap: Record<string, number> = {};
+      for (const c of clients) {
+        cityMap[c.city] = (cityMap[c.city] ?? 0) + 1;
+        statusMap[c.status] = (statusMap[c.status] ?? 0) + 1;
+      }
+      const byCity = Object.entries(cityMap)
+        .sort((a, b) => b[1] - a[1])
+        .map(([city, count]) => ({ city, count }));
+      const byStatus = Object.entries(statusMap).map(([status, count]) => ({ status, count }));
+
+      res.json(GetClientStatsResponse.parse({ total: clients.length, byCity, byStatus }));
+      return;
+    } catch (err) {
+      req.log.error({ err }, "Google Sheets stats failed, falling back to DB");
+    }
+  }
+
   const [total, byCity, byStatus] = await Promise.all([
     db.select({ count: sql<number>`count(*)::int` }).from(clientsTable),
-    db
-      .select({ city: clientsTable.city, count: sql<number>`count(*)::int` })
-      .from(clientsTable)
-      .groupBy(clientsTable.city)
-      .orderBy(sql`count(*) desc`),
-    db
-      .select({ status: clientsTable.status, count: sql<number>`count(*)::int` })
-      .from(clientsTable)
-      .groupBy(clientsTable.status),
+    db.select({ city: clientsTable.city, count: sql<number>`count(*)::int` }).from(clientsTable).groupBy(clientsTable.city).orderBy(sql`count(*) desc`),
+    db.select({ status: clientsTable.status, count: sql<number>`count(*)::int` }).from(clientsTable).groupBy(clientsTable.status),
   ]);
-
-  const stats = GetClientStatsResponse.parse({
+  res.json(GetClientStatsResponse.parse({
     total: total[0]?.count ?? 0,
     byCity: byCity.map((r) => ({ city: r.city, count: r.count })),
     byStatus: byStatus.map((r) => ({ status: r.status, count: r.count })),
-  });
-
-  res.json(stats);
+  }));
 });
 
 router.get("/clients/nearby", async (req, res): Promise<void> => {
@@ -79,19 +116,27 @@ router.get("/clients/nearby", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
+  const { lat, lng, radius = 50 } = parsed.data;
 
-  const { lat, lng, radius = 10 } = parsed.data;
+  if (USE_SHEET) {
+    try {
+      const clients = await getClientsFromSheet();
+      const nearby = clients
+        .map((c) => ({ ...c, distanceKm: haversineKm(lat, lng, c.latitude, c.longitude) }))
+        .filter((c) => c.distanceKm <= radius)
+        .sort((a, b) => a.distanceKm - b.distanceKm);
+      res.json(nearby.map((c) => GetNearbyClientsResponseItem.parse({ ...sheetClientToApi(c), distanceKm: c.distanceKm })));
+      return;
+    } catch (err) {
+      req.log.error({ err }, "Google Sheets nearby failed, falling back to DB");
+    }
+  }
 
   const clients = await db.select().from(clientsTable);
-
   const nearby = clients
-    .map((c) => ({
-      ...c,
-      distanceKm: haversineKm(lat, lng, c.latitude, c.longitude),
-    }))
+    .map((c) => ({ ...c, distanceKm: haversineKm(lat, lng, c.latitude, c.longitude) }))
     .filter((c) => c.distanceKm <= radius)
     .sort((a, b) => a.distanceKm - b.distanceKm);
-
   res.json(nearby.map((c) => GetNearbyClientsResponseItem.parse({ ...c, createdAt: c.createdAt?.toISOString() })));
 });
 
@@ -103,16 +148,20 @@ router.get("/clients/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  const [client] = await db
-    .select()
-    .from(clientsTable)
-    .where(eq(clientsTable.id, params.data.id));
-
-  if (!client) {
-    res.status(404).json({ error: "Client not found" });
-    return;
+  if (USE_SHEET) {
+    try {
+      const clients = await getClientsFromSheet();
+      const client = clients.find((c) => c.id === params.data.id);
+      if (!client) { res.status(404).json({ error: "Client not found" }); return; }
+      res.json(GetClientResponse.parse(sheetClientToApi(client)));
+      return;
+    } catch (err) {
+      req.log.error({ err }, "Google Sheets get-by-id failed, falling back to DB");
+    }
   }
 
+  const [client] = await db.select().from(clientsTable).where(eq(clientsTable.id, params.data.id));
+  if (!client) { res.status(404).json({ error: "Client not found" }); return; }
   res.json(GetClientResponse.parse({ ...client, createdAt: client.createdAt?.toISOString() }));
 });
 

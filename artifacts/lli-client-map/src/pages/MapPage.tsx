@@ -4,12 +4,6 @@ import { Search, MapPin, Navigation, Users, Building2, TrendingUp, X, Loader2 } 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 
-declare global {
-  interface Window {
-    google: typeof google;
-  }
-}
-
 type Client = {
   id: number;
   companyCode: string;
@@ -49,7 +43,6 @@ function ClientCard({ client, onClick, selected, distance }: {
 }) {
   return (
     <button
-      data-testid={`client-card-${client.id}`}
       onClick={onClick}
       className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all duration-150 mb-1.5 ${
         selected
@@ -65,7 +58,7 @@ function ClientCard({ client, onClick, selected, distance }: {
             <MapPin className="h-3 w-3 text-slate-500 shrink-0" />
             <span className="text-xs text-slate-400 truncate">{client.city}, {client.state}</span>
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">{client.fieldPerson}</p>
+          {client.fieldPerson && <p className="text-xs text-slate-500 mt-0.5">{client.fieldPerson}</p>}
         </div>
         <div className="flex flex-col items-end gap-1.5 shrink-0">
           <StatusBadge status={client.status} />
@@ -81,15 +74,18 @@ function ClientCard({ client, onClick, selected, distance }: {
 }
 
 let mapsScriptPromise: Promise<void> | null = null;
-function loadGoogleMaps(apiKey: string): Promise<void> {
-  if (window.google?.maps) return Promise.resolve();
+
+function loadMapsApi(): Promise<void> {
+  if ((window as any).google?.maps) return Promise.resolve();
   if (mapsScriptPromise) return mapsScriptPromise;
-  mapsScriptPromise = new Promise((resolve, reject) => {
+  mapsScriptPromise = new Promise<void>((resolve, reject) => {
+    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
     const script = document.createElement("script");
     script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`;
     script.async = true;
+    script.defer = true;
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Google Maps failed to load"));
+    script.onerror = () => reject(new Error("Failed to load Google Maps"));
     document.head.appendChild(script);
   });
   return mapsScriptPromise;
@@ -103,6 +99,7 @@ export default function MapPage() {
   const [locationError, setLocationError] = useState<string | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"list" | "map">("map");
 
   const mapRef = useRef<HTMLDivElement>(null);
@@ -129,7 +126,7 @@ export default function MapPage() {
     ? (nearbyClients ?? [])
     : (clients ?? []);
 
-  // Draw markers — defined before the effects that call it
+  // Draw markers
   const updateMarkers = useCallback(async (
     displayList: (Client | ClientWithDistance)[],
     selected: Client | null,
@@ -195,58 +192,51 @@ export default function MapPage() {
     clustererRef.current = new MarkerClusterer({ map: googleMapRef.current, markers: newMarkers });
   }, []);
 
-  // Load Google Maps script
+  // Load Google Maps using official async loader
   useEffect(() => {
-    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
-    loadGoogleMaps(apiKey).then(() => setMapReady(true)).catch(console.error);
+    let cancelled = false;
+    loadMapsApi()
+      .then(() => {
+        if (cancelled) return;
+        if (!mapRef.current) return;
+        const map = new window.google.maps.Map(mapRef.current, {
+          center: { lat: 20.5937, lng: 78.9629 },
+          zoom: 5,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: false,
+          styles: [
+            { featureType: "water", elementType: "geometry", stylers: [{ color: "#c9e8f5" }] },
+            { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#f5f5f5" }] },
+            { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
+            { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#ebebeb" }] },
+            { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#c5cdd7" }] },
+            { featureType: "poi", stylers: [{ visibility: "off" }] },
+            { featureType: "transit", stylers: [{ visibility: "off" }] },
+            { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#a0adb8" }, { weight: 1.5 }] },
+            { featureType: "administrative.province", elementType: "geometry.stroke", stylers: [{ color: "#b8c4ce" }, { weight: 1 }] },
+          ],
+        });
+        googleMapRef.current = map;
+        infoWindowRef.current = new window.google.maps.InfoWindow();
+        setMapReady(true);
+      })
+      .catch((err) => {
+        if (!cancelled) setMapError(String(err));
+      });
+    return () => { cancelled = true; };
   }, []);
 
-  // Initialize map after script loads
-  useEffect(() => {
-    if (!mapReady || googleMapRef.current) return;
-
-    function initMap() {
-      if (!mapRef.current || googleMapRef.current) return;
-      const map = new window.google.maps.Map(mapRef.current, {
-        center: { lat: 20.5937, lng: 78.9629 },
-        zoom: 5,
-        mapTypeControl: false,
-        streetViewControl: false,
-        fullscreenControl: false,
-        styles: [
-          { featureType: "water", elementType: "geometry", stylers: [{ color: "#c9e8f5" }] },
-          { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#f5f5f5" }] },
-          { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
-          { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#ebebeb" }] },
-          { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#c5cdd7" }] },
-          { featureType: "poi", stylers: [{ visibility: "off" }] },
-          { featureType: "transit", stylers: [{ visibility: "off" }] },
-          { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#a0adb8" }, { weight: 1.5 }] },
-          { featureType: "administrative.province", elementType: "geometry.stroke", stylers: [{ color: "#b8c4ce" }, { weight: 1 }] },
-        ],
-      });
-      googleMapRef.current = map;
-      infoWindowRef.current = new window.google.maps.InfoWindow();
-      window.google.maps.event.trigger(map, "resize");
-    }
-
-    // Use two rAFs to ensure the DOM has painted and elements have dimensions
-    requestAnimationFrame(() => requestAnimationFrame(initMap));
-  }, [mapReady]);
-
-  // Re-draw markers when clients, selection, or location changes
+  // Re-draw markers when clients / selection / location changes
   useEffect(() => {
     if (!mapReady || !googleMapRef.current) return;
     updateMarkers(displayClients, selectedClient, !!userLocation);
   }, [displayClients, selectedClient, userLocation, mapReady, updateMarkers]);
 
-  // Update user location marker
+  // User location marker
   useEffect(() => {
     if (!mapReady || !googleMapRef.current || !window.google?.maps) return;
-    if (userMarkerRef.current) {
-      userMarkerRef.current.setMap(null);
-      userMarkerRef.current = null;
-    }
+    if (userMarkerRef.current) { userMarkerRef.current.setMap(null); userMarkerRef.current = null; }
     if (userLocation) {
       userMarkerRef.current = new window.google.maps.Marker({
         position: userLocation,
@@ -267,7 +257,7 @@ export default function MapPage() {
     }
   }, [userLocation, mapReady]);
 
-  // Pan map to selected client
+  // Pan to selected client
   useEffect(() => {
     if (selectedClient && googleMapRef.current) {
       googleMapRef.current.panTo({ lat: selectedClient.latitude, lng: selectedClient.longitude });
@@ -287,17 +277,11 @@ export default function MapPage() {
         setCommittedSearch("");
         setSearchQuery("");
       },
-      () => {
-        setLocationError("Unable to get location. Please allow access.");
-        setLocationLoading(false);
-      }
+      () => { setLocationError("Unable to get location. Please allow access."); setLocationLoading(false); }
     );
   };
 
-  const handleSearch = () => {
-    setCommittedSearch(searchQuery);
-    setUserLocation(null);
-  };
+  const handleSearch = () => { setCommittedSearch(searchQuery); setUserLocation(null); };
 
   const handleClearLocation = () => {
     setUserLocation(null);
@@ -330,7 +314,6 @@ export default function MapPage() {
           <div className="relative flex-1">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500 pointer-events-none" />
             <input
-              data-testid="input-search"
               type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -340,7 +323,6 @@ export default function MapPage() {
             />
           </div>
           <button
-            data-testid="button-search"
             onClick={handleSearch}
             className="px-3 py-2 bg-amber-400 hover:bg-amber-300 text-slate-900 rounded-lg text-sm font-bold transition-colors shrink-0"
           >
@@ -350,16 +332,13 @@ export default function MapPage() {
 
         {userLocation ? (
           <button
-            data-testid="button-clear-location"
             onClick={handleClearLocation}
             className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs font-medium hover:bg-indigo-600/30 transition-colors"
           >
-            <X className="h-3 w-3" />
-            Clear Location
+            <X className="h-3 w-3" />Clear Location
           </button>
         ) : (
           <button
-            data-testid="button-use-location"
             onClick={handleGetLocation}
             disabled={locationLoading}
             className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
@@ -394,9 +373,7 @@ export default function MapPage() {
                   <Navigation className="h-3 w-3 text-indigo-400" />
                   <span className="text-[10px] text-indigo-400 uppercase tracking-wider font-semibold">Nearby</span>
                 </div>
-                {nearbyLoading
-                  ? <Loader2 className="h-5 w-5 animate-spin text-indigo-400 mt-1" />
-                  : <p className="text-2xl font-bold text-white tabular-nums">{nearbyClients?.length ?? 0}</p>}
+                {nearbyLoading ? <Loader2 className="h-5 w-5 animate-spin text-indigo-400 mt-1" /> : <p className="text-2xl font-bold text-white tabular-nums">{nearbyClients?.length ?? 0}</p>}
                 <p className="text-[10px] text-slate-500 mt-0.5">within 50 km</p>
               </div>
             ) : committedSearch ? (
@@ -405,9 +382,7 @@ export default function MapPage() {
                   <Building2 className="h-3 w-3 text-amber-400" />
                   <span className="text-[10px] text-amber-400 uppercase tracking-wider font-semibold">Filtered</span>
                 </div>
-                {clientsLoading
-                  ? <Loader2 className="h-5 w-5 animate-spin text-amber-400 mt-1" />
-                  : <p className="text-2xl font-bold text-white tabular-nums">{cityCount}</p>}
+                {clientsLoading ? <Loader2 className="h-5 w-5 animate-spin text-amber-400 mt-1" /> : <p className="text-2xl font-bold text-white tabular-nums">{cityCount}</p>}
                 <p className="text-[10px] text-slate-500 mt-0.5 truncate">{committedSearch}</p>
               </div>
             ) : (
@@ -434,7 +409,7 @@ export default function MapPage() {
         )}
       </div>
 
-      {/* Client List */}
+      {/* Client list */}
       <div className="flex-1 flex flex-col min-h-0">
         <div className="px-3 py-2 flex items-center justify-between shrink-0">
           <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
@@ -447,9 +422,7 @@ export default function MapPage() {
         <ScrollArea className="flex-1 min-h-0">
           <div className="px-3 pb-4">
             {(clientsLoading || nearbyLoading) ? (
-              Array.from({ length: 6 }).map((_, i) => (
-                <Skeleton key={i} className="h-[72px] w-full rounded-lg mb-1.5 bg-slate-800" />
-              ))
+              Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-[72px] w-full rounded-lg mb-1.5 bg-slate-800" />)
             ) : displayClients.length === 0 ? (
               <div className="text-center py-10">
                 <MapPin className="h-9 w-9 text-slate-700 mx-auto mb-3" />
@@ -475,26 +448,40 @@ export default function MapPage() {
 
   const mapPanel = (
     <div className="relative flex-1 h-full min-w-0">
-      {!mapReady && (
+      {/* Loading overlay */}
+      {!mapReady && !mapError && (
         <div className="absolute inset-0 flex items-center justify-center bg-slate-100 z-20">
           <div className="text-center">
             <Loader2 className="h-8 w-8 animate-spin text-[#1e3a5f] mx-auto mb-2" />
-            <p className="text-sm text-slate-500">Loading map...</p>
+            <p className="text-sm text-slate-500">Loading map…</p>
           </div>
         </div>
       )}
-      <div ref={mapRef} data-testid="map-container" style={{ position: "absolute", inset: 0 }} />
+      {mapError && (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-100 z-20 p-6">
+          <div className="text-center max-w-sm">
+            <MapPin className="h-10 w-10 text-slate-400 mx-auto mb-3" />
+            <p className="text-sm font-semibold text-slate-700 mb-1">Map failed to load</p>
+            <p className="text-xs text-slate-500">{mapError}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Map container — always in DOM so dimensions are stable */}
+      <div ref={mapRef} style={{ position: "absolute", inset: 0 }} />
 
       {/* Legend */}
-      <div className="absolute bottom-6 left-4 bg-white/95 backdrop-blur-sm border border-slate-200 rounded-xl p-3 shadow-lg text-xs z-10 pointer-events-none">
-        <p className="font-bold text-slate-700 text-[10px] uppercase tracking-widest mb-2">Legend</p>
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#1e3a5f] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">Client</span></div>
-          {userLocation && <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#38bdf8] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">Nearby</span></div>}
-          <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#f59e0b] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">Selected</span></div>
-          {userLocation && <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#6366f1] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">You</span></div>}
+      {mapReady && (
+        <div className="absolute bottom-6 left-4 bg-white/95 backdrop-blur-sm border border-slate-200 rounded-xl p-3 shadow-lg text-xs z-10 pointer-events-none">
+          <p className="font-bold text-slate-700 text-[10px] uppercase tracking-widest mb-2">Legend</p>
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#1e3a5f] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">Client</span></div>
+            {userLocation && <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#38bdf8] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">Nearby</span></div>}
+            <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#f59e0b] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">Selected</span></div>
+            {userLocation && <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#6366f1] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">You</span></div>}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Selected client overlay */}
       {selectedClient && (
@@ -504,14 +491,14 @@ export default function MapPage() {
               <p className="text-sm font-bold text-slate-900 leading-tight">{selectedClient.companyName}</p>
               <p className="text-[10px] text-slate-400 font-mono mt-0.5">{selectedClient.companyCode}</p>
             </div>
-            <button data-testid="button-close-selected" onClick={() => setSelectedClient(null)} className="text-slate-400 hover:text-slate-700 transition-colors shrink-0">
+            <button onClick={() => setSelectedClient(null)} className="text-slate-400 hover:text-slate-700 transition-colors shrink-0">
               <X className="h-4 w-4" />
             </button>
           </div>
           <div className="space-y-1.5">
             <p className="text-xs text-slate-600"><span className="font-semibold text-slate-800">City</span>&nbsp;{selectedClient.city}, {selectedClient.state}</p>
             <p className="text-xs text-slate-600"><span className="font-semibold text-slate-800">PIN</span>&nbsp;{selectedClient.pinCode}</p>
-            <p className="text-xs text-slate-600"><span className="font-semibold text-slate-800">Field</span>&nbsp;{selectedClient.fieldPerson}</p>
+            {selectedClient.fieldPerson && <p className="text-xs text-slate-600"><span className="font-semibold text-slate-800">Field</span>&nbsp;{selectedClient.fieldPerson}</p>}
           </div>
           <div className="mt-3"><StatusBadge status={selectedClient.status} /></div>
         </div>
@@ -530,10 +517,10 @@ export default function MapPage() {
       {/* Mobile */}
       <div className="flex md:hidden flex-col h-screen w-full overflow-hidden">
         <div className="flex bg-[#0d1929] border-b border-slate-800 shrink-0">
-          <button data-testid="tab-map" onClick={() => setMobileTab("map")} className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors ${mobileTab === "map" ? "text-amber-400 border-b-2 border-amber-400" : "text-slate-500"}`}>
+          <button onClick={() => setMobileTab("map")} className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors ${mobileTab === "map" ? "text-amber-400 border-b-2 border-amber-400" : "text-slate-500"}`}>
             <MapPin className="h-3.5 w-3.5" />&nbsp;Map
           </button>
-          <button data-testid="tab-list" onClick={() => setMobileTab("list")} className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors ${mobileTab === "list" ? "text-amber-400 border-b-2 border-amber-400" : "text-slate-500"}`}>
+          <button onClick={() => setMobileTab("list")} className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors ${mobileTab === "list" ? "text-amber-400 border-b-2 border-amber-400" : "text-slate-500"}`}>
             <Users className="h-3.5 w-3.5" />&nbsp;Clients ({displayClients.length})
           </button>
         </div>
