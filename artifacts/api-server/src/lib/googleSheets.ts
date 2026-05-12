@@ -31,7 +31,7 @@ function getSheetsClient() {
 
 let cachedClients: SheetClient[] | null = null;
 let cacheTime = 0;
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 export async function getClientsFromSheet(): Promise<SheetClient[]> {
   const now = Date.now();
@@ -41,7 +41,6 @@ export async function getClientsFromSheet(): Promise<SheetClient[]> {
 
   const sheets = getSheetsClient();
 
-  // Fetch header row first to build column map
   const headerRes = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range: `${SHEET_TAB}!1:1`,
@@ -50,67 +49,67 @@ export async function getClientsFromSheet(): Promise<SheetClient[]> {
     String(h ?? "").trim().toLowerCase()
   );
 
-  // Fetch all data rows (up to 2000)
   const dataRes = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: `${SHEET_TAB}!2:2000`,
+    range: `${SHEET_TAB}!2:5000`,
   });
   const rows: string[][] = (dataRes.data.values ?? []).map((row) =>
     (row as unknown[]).map((cell) => String(cell ?? "").trim())
   );
 
-  // Build column index map
   function colIdx(names: string[]): number {
     for (const name of names) {
-      const i = headers.findIndex((h) => h.includes(name));
+      const i = headers.findIndex((h) => h.includes(name.toLowerCase()));
       if (i !== -1) return i;
     }
     return -1;
   }
 
-  const latIdx = colIdx(["latitude", "lat"]);
-  const lngIdx = colIdx(["longitude", "lng", "long"]);
-  const cityIdx = colIdx(["city"]);
-  const stateIdx = colIdx(["state"]);
-  const pinIdx = colIdx(["pin code", "pincode", "pin"]);
-  const addressIdx = colIdx(["company address", "address"]);
-  const geoStatusIdx = colIdx(["geo status"]);
-  const nameIdx = colIdx(["company name", "firm name", "name"]);
-  const codeIdx = colIdx(["company code", "code", "sr no", "srno", "s.no"]);
-  const personIdx = colIdx(["follow", "field person", "person", "handled"]);
-  const statusIdx = colIdx(["status"]);
-  const dateIdx = colIdx(["date", "last operated"]);
+  // Map to exact column names from the sheet headers
+  const statusIdx   = colIdx(["company status"]);
+  const snIdx       = colIdx(["s.no", "sno", "s.n"]);
+  const codeIdx     = colIdx(["company code"]);
+  const nameIdx     = colIdx(["company name"]);
+  const fieldIdx    = colIdx(["field person responsible", "field person"]);
+  const addressIdx  = colIdx(["company address"]);
+  const cityIdx     = colIdx(["city"]);
+  const stateIdx    = colIdx(["state"]);
+  const pinIdx      = colIdx(["pin code", "pincode"]);
+  const latIdx      = colIdx(["latitude"]);
+  const lngIdx      = colIdx(["longitude"]);
+  const geoIdx      = colIdx(["geo status"]);
+  const dateIdx     = colIdx(["company work start date", "work start date"]);
 
   const clients: SheetClient[] = [];
   let id = 1;
 
   for (const row of rows) {
-    const lat = parseFloat(row[latIdx] ?? "");
-    const lng = parseFloat(row[lngIdx] ?? "");
-    if (!lat || !lng || isNaN(lat) || isNaN(lng)) continue;
+    const latStr = latIdx >= 0 ? row[latIdx] ?? "" : "";
+    const lngStr = lngIdx >= 0 ? row[lngIdx] ?? "" : "";
+    const lat = parseFloat(latStr);
+    const lng = parseFloat(lngStr);
+    if (!latStr || !lngStr || isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) continue;
 
-    const geoStatus = geoStatusIdx >= 0 ? row[geoStatusIdx] : "";
-    // Only include rows that have been geo-located
-    if (geoStatusIdx >= 0 && geoStatus && !geoStatus.toLowerCase().includes("done") && !geoStatus.toLowerCase().includes("pin")) continue;
+    const geoStatus = geoIdx >= 0 ? (row[geoIdx] ?? "") : "";
+    if (geoIdx >= 0 && geoStatus && !geoStatus.toLowerCase().includes("done") && !geoStatus.toLowerCase().includes("pin")) continue;
 
-    const city = cityIdx >= 0 ? row[cityIdx] : "";
-    const state = stateIdx >= 0 ? row[stateIdx] : "";
-    const pinCode = pinIdx >= 0 ? row[pinIdx] : "";
-    const address = addressIdx >= 0 ? row[addressIdx] : "";
-    const name = nameIdx >= 0 ? row[nameIdx] : "";
-    const code = codeIdx >= 0 ? row[codeIdx] : "";
-    const person = personIdx >= 0 ? row[personIdx] : "";
-    const rawStatus = statusIdx >= 0 ? row[statusIdx]?.toLowerCase() : "";
-    const createdAtRaw = dateIdx >= 0 ? row[dateIdx] : "";
-
-    // Normalize status
+    const rawStatus = statusIdx >= 0 ? (row[statusIdx] ?? "").toLowerCase() : "active";
     let status = "active";
-    if (rawStatus.includes("inactive") || rawStatus.includes("close")) status = "inactive";
-    else if (rawStatus.includes("prospect") || rawStatus.includes("lead")) status = "prospect";
+    if (rawStatus.includes("inactive") || rawStatus.includes("close") || rawStatus.includes("hold")) status = "inactive";
+    else if (rawStatus.includes("prospect") || rawStatus.includes("lead") || rawStatus.includes("nil")) status = "prospect";
 
-    // Build a reasonable company code if missing
-    const finalCode = code || `${city?.substring(0, 3)?.toUpperCase() ?? "CLT"}${String(id).padStart(3, "0")}`;
-    const finalName = name || `${city} Client ${id}`;
+    const sn = snIdx >= 0 ? row[snIdx] ?? "" : "";
+    const code = codeIdx >= 0 ? row[codeIdx] ?? "" : "";
+    const name = (nameIdx >= 0 ? row[nameIdx] ?? "" : "").replace(/\r/g, "").trim();
+    const city = cityIdx >= 0 ? row[cityIdx] ?? "" : "";
+    const state = stateIdx >= 0 ? row[stateIdx] ?? "" : "";
+    const pinCode = pinIdx >= 0 ? row[pinIdx] ?? "" : "";
+    const address = addressIdx >= 0 ? row[addressIdx] ?? "" : "";
+    const fieldPerson = fieldIdx >= 0 ? row[fieldIdx] ?? "" : "";
+    const createdAtRaw = dateIdx >= 0 ? row[dateIdx] ?? "" : "";
+
+    const finalCode = code || (sn ? `SN${sn.padStart(3, "0")}` : `CLT${String(id).padStart(3, "0")}`);
+    const finalName = name || `${city} Client ${sn || id}`;
 
     let createdAt = new Date().toISOString();
     if (createdAtRaw) {
@@ -127,7 +126,7 @@ export async function getClientsFromSheet(): Promise<SheetClient[]> {
       pinCode,
       latitude: lat,
       longitude: lng,
-      fieldPerson: person,
+      fieldPerson,
       status,
       address,
       createdAt,

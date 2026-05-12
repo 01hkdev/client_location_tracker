@@ -38,4 +38,4 @@ channel = "stable-25_05"
 
 [userenv.shared]
 VITE_GOOGLE_MAPS_API_KEY = "$(echo $GOOGLE_MAPS_API_KEY)"
-GOOGLE_SHEET_ID = "10en3bcSkXvnVakSCpFJZLZ-ka10rclWD6H2sdRr3g-8"
+GOOGLE_SHEET_ID = "10en3bcSkXvnVakSCpFJZLZ-ka10rcIWD6H2sdRr3g-8"
