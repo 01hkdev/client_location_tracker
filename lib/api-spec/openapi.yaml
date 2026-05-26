@@ -241,12 +241,24 @@ components:
         count:
           type: integer
 
+    StateCount:
+      type: object
+      required:
+        - state
+        - count
+      properties:
+        state:
+          type: string
+        count:
+          type: integer
+
     ClientStats:
       type: object
       required:
         - total
         - byCity
         - byStatus
+        - byState
       properties:
         total:
           type: integer
@@ -258,3 +270,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/StatusCount"
+        byState:
+          type: array
+          items:
+            $ref: "#/components/schemas/StateCount"

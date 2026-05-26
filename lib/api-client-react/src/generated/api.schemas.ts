@@ -48,10 +48,16 @@ export interface StatusCount {
   count: number;
 }
 
+export interface StateCount {
+  state: string;
+  count: number;
+}
+
 export interface ClientStats {
   total: number;
   byCity: CityCount[];
   byStatus: StatusCount[];
+  byState: StateCount[];
 }
 
 export type ListClientsParams = {

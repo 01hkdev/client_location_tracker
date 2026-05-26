@@ -476,40 +476,76 @@ export default function MapPage() {
 
   const isLoading = clientsLoading || nearbyLoading;
 
+  const STATUS_MEANING: Record<string, string> = {
+    active: "Currently doing business",
+    inactive: "No recent activity",
+    prospect: "Potential client — not yet converted",
+    office: "Our own office / branch",
+  };
+
   const statsPanel = (
-    <div className="px-3 py-3 shrink-0 border-b border-slate-100">
+    <div className="px-3 py-3 shrink-0 border-b border-slate-100 space-y-3">
+      {/* Row 1 — 4 key numbers */}
       {statsLoading ? (
-        <div className="grid grid-cols-3 gap-2">
-          {[0,1,2].map(i => <Skeleton key={i} className="h-14 rounded-xl bg-slate-100" />)}
+        <div className="grid grid-cols-4 gap-1.5">
+          {[0,1,2,3].map(i => <Skeleton key={i} className="h-14 rounded-xl bg-slate-100" />)}
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-2">
-          <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
-            <p className="text-[9px] text-slate-400 uppercase tracking-widest font-semibold mb-1.5">Total</p>
-            <p className="text-xl font-bold text-slate-800 tabular-nums">{stats?.total ?? 0}</p>
-            <p className="text-[9px] text-slate-400 mt-0.5">clients</p>
+        <div className="grid grid-cols-4 gap-1.5">
+          <div className="bg-slate-50 rounded-xl p-2 border border-slate-100 text-center">
+            <p className="text-[8px] text-slate-400 uppercase tracking-wider font-semibold mb-1">Clients</p>
+            <p className="text-lg font-bold text-slate-800 tabular-nums leading-none">{stats?.total ?? 0}</p>
           </div>
-          <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
-            <p className="text-[9px] text-slate-400 uppercase tracking-widest font-semibold mb-1.5">Cities</p>
-            <p className="text-xl font-bold text-slate-800 tabular-nums">{stats?.byCity?.length ?? 0}</p>
-            <p className="text-[9px] text-slate-400 mt-0.5">covered</p>
+          <div className="bg-slate-50 rounded-xl p-2 border border-slate-100 text-center">
+            <p className="text-[8px] text-slate-400 uppercase tracking-wider font-semibold mb-1">Cities</p>
+            <p className="text-lg font-bold text-slate-800 tabular-nums leading-none">{stats?.byCity?.length ?? 0}</p>
           </div>
-          <div className="bg-amber-50 rounded-xl p-2.5 border border-amber-100">
-            <p className="text-[9px] text-amber-600 uppercase tracking-widest font-semibold mb-1.5">Shown</p>
-            <p className="text-xl font-bold text-amber-600 tabular-nums">{allDisplayClients.length}</p>
-            <p className="text-[9px] text-amber-400 mt-0.5">filtered</p>
+          <div className="bg-indigo-50 rounded-xl p-2 border border-indigo-100 text-center">
+            <p className="text-[8px] text-indigo-500 uppercase tracking-wider font-semibold mb-1">States</p>
+            <p className="text-lg font-bold text-indigo-600 tabular-nums leading-none">{stats?.byState?.length ?? 0}</p>
+          </div>
+          <div className="bg-amber-50 rounded-xl p-2 border border-amber-100 text-center">
+            <p className="text-[8px] text-amber-500 uppercase tracking-wider font-semibold mb-1">Shown</p>
+            <p className="text-lg font-bold text-amber-600 tabular-nums leading-none">{allDisplayClients.length}</p>
           </div>
         </div>
       )}
+
+      {/* Row 2 — States list */}
+      {!statsLoading && stats?.byState && stats.byState.length > 0 && (
+        <div>
+          <p className="text-[8px] text-slate-400 uppercase tracking-widest font-bold mb-1.5">States covered</p>
+          <div className="flex flex-wrap gap-1">
+            {stats.byState.map(({ state, count }: { state: string; count: number }) => (
+              <span key={state} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-indigo-50 border border-indigo-100 rounded-md text-[9px] font-medium text-indigo-700">
+                {state}
+                <span className="text-indigo-400 font-mono">{count}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Row 3 — Status legend with meanings */}
       {!statsLoading && stats?.byStatus && stats.byStatus.length > 0 && (
-        <div className="flex gap-2.5 mt-2 flex-wrap">
-          {stats.byStatus.map(({ status, count }: { status: string; count: number }) => (
-            <div key={status} className="flex items-center gap-1 text-[10px] text-slate-400">
-              <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[status.toLowerCase()] ?? "bg-slate-400"}`} />
-              <span className="capitalize text-slate-600">{status}</span>
-              <span className="text-slate-400 font-mono">{count}</span>
-            </div>
-          ))}
+        <div>
+          <p className="text-[8px] text-slate-400 uppercase tracking-widest font-bold mb-1.5">Status legend</p>
+          <div className="space-y-1.5">
+            {stats.byStatus.map(({ status, count }: { status: string; count: number }) => {
+              const key = status.toLowerCase();
+              const meaning = STATUS_MEANING[key] ?? status;
+              return (
+                <div key={status} className="flex items-start gap-2">
+                  <div className="flex items-center gap-1.5 w-20 shrink-0 mt-0.5">
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_DOT[key] ?? "bg-slate-400"}`} />
+                    <span className="text-[10px] font-semibold text-slate-700 capitalize">{status}</span>
+                    <span className="text-[9px] text-slate-400 font-mono ml-auto">{count}</span>
+                  </div>
+                  <p className="text-[9px] text-slate-400 leading-tight">{meaning}</p>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

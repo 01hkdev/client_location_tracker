@@ -82,31 +82,38 @@ router.get("/clients/stats", async (req, res): Promise<void> => {
       const clients = await getClientsFromSheet();
       const cityMap: Record<string, number> = {};
       const statusMap: Record<string, number> = {};
+      const stateMap: Record<string, number> = {};
       for (const c of clients) {
         cityMap[c.city] = (cityMap[c.city] ?? 0) + 1;
         statusMap[c.status] = (statusMap[c.status] ?? 0) + 1;
+        stateMap[c.state] = (stateMap[c.state] ?? 0) + 1;
       }
       const byCity = Object.entries(cityMap)
         .sort((a, b) => b[1] - a[1])
         .map(([city, count]) => ({ city, count }));
       const byStatus = Object.entries(statusMap).map(([status, count]) => ({ status, count }));
+      const byState = Object.entries(stateMap)
+        .sort((a, b) => b[1] - a[1])
+        .map(([state, count]) => ({ state, count }));
 
-      res.json(GetClientStatsResponse.parse({ total: clients.length, byCity, byStatus }));
+      res.json(GetClientStatsResponse.parse({ total: clients.length, byCity, byStatus, byState }));
       return;
     } catch (err) {
       req.log.error({ err }, "Google Sheets stats failed, falling back to DB");
     }
   }
 
-  const [total, byCity, byStatus] = await Promise.all([
+  const [total, byCity, byStatus, byState] = await Promise.all([
     db.select({ count: sql<number>`count(*)::int` }).from(clientsTable),
     db.select({ city: clientsTable.city, count: sql<number>`count(*)::int` }).from(clientsTable).groupBy(clientsTable.city).orderBy(sql`count(*) desc`),
     db.select({ status: clientsTable.status, count: sql<number>`count(*)::int` }).from(clientsTable).groupBy(clientsTable.status),
+    db.select({ state: clientsTable.state, count: sql<number>`count(*)::int` }).from(clientsTable).groupBy(clientsTable.state).orderBy(sql`count(*) desc`),
   ]);
   res.json(GetClientStatsResponse.parse({
     total: total[0]?.count ?? 0,
     byCity: byCity.map((r) => ({ city: r.city, count: r.count })),
     byStatus: byStatus.map((r) => ({ status: r.status, count: r.count })),
+    byState: byState.map((r) => ({ state: r.state, count: r.count })),
   }));
 });
 

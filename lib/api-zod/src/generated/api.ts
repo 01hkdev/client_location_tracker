@@ -90,6 +90,12 @@ export const GetClientStatsResponse = zod.object({
       count: zod.number(),
     }),
   ),
+  byState: zod.array(
+    zod.object({
+      state: zod.string(),
+      count: zod.number(),
+    }),
+  ),
 });
 
 /**
