@@ -123,8 +123,8 @@ export default function MapPage() {
   );
 
   const displayClients: (Client | ClientWithDistance)[] = userLocation
-    ? (nearbyClients ?? [])
-    : (clients ?? []);
+    ? (Array.isArray(nearbyClients) ? nearbyClients : [])
+    : (Array.isArray(clients) ? clients : []);
 
   // Draw markers
   const updateMarkers = useCallback(async (
@@ -391,15 +391,15 @@ export default function MapPage() {
                   <TrendingUp className="h-3 w-3 text-emerald-400" />
                   <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Cities</span>
                 </div>
-                <p className="text-2xl font-bold text-white tabular-nums">{stats?.byCity.length ?? 0}</p>
+                <p className="text-2xl font-bold text-white tabular-nums">{stats?.byCity?.length ?? 0}</p>
                 <p className="text-[10px] text-slate-500 mt-0.5">Covered</p>
               </div>
             )}
           </div>
         )}
-        {!statsLoading && stats && stats.byStatus.length > 0 && (
+        {!statsLoading && stats && (stats.byStatus?.length ?? 0) > 0 && (
           <div className="flex gap-3 mt-2.5 flex-wrap">
-            {stats.byStatus.map((s) => (
+            {stats.byStatus?.map((s) => (
               <div key={s.status} className="flex items-center gap-1.5">
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${s.status === "active" ? "bg-emerald-400" : s.status === "inactive" ? "bg-slate-500" : "bg-amber-400"}`} />
                 <span className="text-[11px] text-slate-400 capitalize">{s.status}: <strong className="text-slate-300 font-semibold">{s.count}</strong></span>

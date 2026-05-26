@@ -367,5 +367,18 @@ export async function customFetch<T = unknown>(
     throw new ApiError(response, errorData, requestInfo);
   }
 
+  // Reject HTML responses even when status is 200 — this happens when the
+  // Replit reverse proxy serves the frontend shell instead of the API server
+  // (e.g. API server not yet started, proxy fallback, etc.)
+  const mediaType = getMediaType(response.headers);
+  if (mediaType === "text/html") {
+    const syntheticResponse = new Response(null, {
+      status: 502,
+      statusText: "Bad Gateway",
+      headers: response.headers,
+    });
+    throw new ApiError(syntheticResponse, "API returned HTML (proxy fallback)", requestInfo);
+  }
+
   return (await parseSuccessBody(response, responseType, requestInfo)) as T;
 }
