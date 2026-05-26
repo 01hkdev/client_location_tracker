@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { Link } from "wouter";
 import { setOptions, importLibrary } from "@googlemaps/js-api-loader";
 import { useListClients, useGetNearbyClients, useGetClientStats } from "@workspace/api-client-react";
 import {
   Search, MapPin, Navigation,
   X, Loader2, BarChart2,
   Car, Bike, ExternalLink, Clock, Route, User, Monitor, Building2,
+  Users, Hash,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,7 +32,8 @@ type Suggestion =
   | { type: "city"; label: string }
   | { type: "state"; label: string }
   | { type: "field"; label: string }
-  | { type: "computer"; label: string };
+  | { type: "computer"; label: string }
+  | { type: "pin"; label: string };
 
 setOptions({
   key: import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string,
@@ -72,18 +75,21 @@ function makeMarkerIcon(
   status: string,
   name: string
 ): google.maps.Icon {
-  const circleD = isSelected ? 44 : 34;
-  const pad = 4;
-  const textH = 15;
-  const shortName = name.length > 16 ? name.substring(0, 15) + "…" : name;
+  const pinW = isSelected ? 38 : 28;
+  const pinR = pinW / 2;
+  const tailH = Math.round(pinW * 0.45);
+  const topPad = isSelected ? 5 : 3;
+  const textH = 14;
+  const gap = 3;
+  const shortName = name.length > 15 ? name.substring(0, 14) + "…" : name;
 
-  const tmpCanvas = document.createElement("canvas");
-  const tmpCtx = tmpCanvas.getContext("2d")!;
+  const tmpC = document.createElement("canvas");
+  const tmpCtx = tmpC.getContext("2d")!;
   tmpCtx.font = `bold 9px Inter, Arial, sans-serif`;
-  const tw = tmpCtx.measureText(shortName).width + 8;
+  const tw = tmpCtx.measureText(shortName).width + 10;
 
-  const canvasW = Math.max(circleD + pad * 2, tw + 8);
-  const canvasH = circleD + pad * 2 + textH + 4;
+  const canvasW = Math.max(pinW + 8, tw + 6);
+  const canvasH = topPad + pinW + tailH + gap + textH + 4;
 
   const canvas = document.createElement("canvas");
   canvas.width = canvasW;
@@ -91,46 +97,69 @@ function makeMarkerIcon(
   const ctx = canvas.getContext("2d")!;
 
   const cx = canvasW / 2;
-  const cy = circleD / 2 + pad;
-  const r = circleD / 2 - 3;
+  const cy = topPad + pinR; // center of circle part
+  const tipY = topPad + pinW + tailH; // pointed tip y
 
-  const fillColor = isSelected
-    ? "#f59e0b"
-    : (STATUS_COLORS[status.toLowerCase()] ?? "#6366f1");
+  const fillColor = isSelected ? "#f59e0b" : (STATUS_COLORS[status.toLowerCase()] ?? "#6366f1");
 
+  // Glow ring for selected
   if (isSelected) {
     ctx.beginPath();
-    ctx.arc(cx, cy, r + 5, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(251,191,36,0.18)";
+    ctx.arc(cx, cy, pinR + 5, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(251,191,36,0.2)";
     ctx.fill();
   }
 
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = fillColor;
-  ctx.shadowColor = fillColor;
-  ctx.shadowBlur = isSelected ? 10 : 5;
-  ctx.fill();
-  ctx.shadowBlur = 0;
+  // Shadow
+  ctx.shadowColor = "rgba(0,0,0,0.28)";
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetY = 3;
 
+  // Teardrop shape
   ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.moveTo(cx, tipY);
+  ctx.bezierCurveTo(
+    cx - pinR * 0.6, cy + pinR * 0.8,
+    cx - pinR, cy,
+    cx - pinR, cy
+  );
+  ctx.arc(cx, cy, pinR, Math.PI, 0);
+  ctx.bezierCurveTo(
+    cx + pinR, cy,
+    cx + pinR * 0.6, cy + pinR * 0.8,
+    cx, tipY
+  );
+  ctx.closePath();
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+
+  // White border
+  ctx.beginPath();
+  ctx.moveTo(cx, tipY);
+  ctx.bezierCurveTo(cx - pinR * 0.6, cy + pinR * 0.8, cx - pinR, cy, cx - pinR, cy);
+  ctx.arc(cx, cy, pinR, Math.PI, 0);
+  ctx.bezierCurveTo(cx + pinR, cy, cx + pinR * 0.6, cy + pinR * 0.8, cx, tipY);
+  ctx.closePath();
   ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = isSelected ? 3 : 2;
+  ctx.lineWidth = isSelected ? 2.5 : 2;
   ctx.stroke();
 
+  // Inner white circle dot
   ctx.beginPath();
-  ctx.arc(cx - r * 0.25, cy - r * 0.25, r * 0.2, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.arc(cx, cy, pinR * 0.32, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
   ctx.fill();
 
-  // Name label below the circle
-  const labelY = cy + r + 5;
-  const labelW = Math.min(tw + 2, canvasW - 4);
-  ctx.fillStyle = "rgba(255,255,255,0.92)";
-  ctx.beginPath();
+  // Name label below
+  const labelY = tipY + gap;
+  const labelW = Math.min(tw, canvasW - 2);
   const lx = cx - labelW / 2;
-  const lr = 3;
+  ctx.fillStyle = "rgba(15,23,42,0.82)";
+  const lr = 4;
+  ctx.beginPath();
   ctx.moveTo(lx + lr, labelY);
   ctx.lineTo(lx + labelW - lr, labelY);
   ctx.quadraticCurveTo(lx + labelW, labelY, lx + labelW, labelY + lr);
@@ -144,7 +173,7 @@ function makeMarkerIcon(
   ctx.fill();
 
   ctx.font = `bold 9px Inter, Arial, sans-serif`;
-  ctx.fillStyle = "#1e293b";
+  ctx.fillStyle = "#f8fafc";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(shortName, cx, labelY + textH / 2);
@@ -152,7 +181,7 @@ function makeMarkerIcon(
   return {
     url: canvas.toDataURL(),
     scaledSize: new google.maps.Size(canvasW, canvasH),
-    anchor: new google.maps.Point(cx, cy),
+    anchor: new google.maps.Point(cx, tipY),
   };
 }
 
@@ -258,23 +287,27 @@ export default function MapPage() {
     const q = searchQuery.trim().toLowerCase();
     if (!q || q.length < 2 || !allClientsData) return [];
     const clients = allClientsData as Client[];
+    const isPinSearch = /^\d+$/.test(q);
 
     const clientMatches: Suggestion[] = [];
     const citySet = new Set<string>();
     const stateSet = new Set<string>();
     const fieldSet = new Set<string>();
     const computerSet = new Set<string>();
+    const pinSet = new Set<string>();
 
     for (const c of clients) {
-      if (c.companyName.toLowerCase().includes(q) && clientMatches.length < 5)
+      if (!isPinSearch && c.companyName.toLowerCase().includes(q) && clientMatches.length < 5)
         clientMatches.push({ type: "client", label: c.companyName, client: c });
-      if (c.city.toLowerCase().includes(q)) citySet.add(c.city);
-      if (c.state.toLowerCase().includes(q)) stateSet.add(c.state);
-      if (c.fieldPerson && c.fieldPerson.toLowerCase().includes(q)) fieldSet.add(c.fieldPerson);
-      if (c.computerPerson && c.computerPerson.toLowerCase().includes(q)) computerSet.add(c.computerPerson);
+      if (!isPinSearch && c.city.toLowerCase().includes(q)) citySet.add(c.city);
+      if (!isPinSearch && c.state.toLowerCase().includes(q)) stateSet.add(c.state);
+      if (!isPinSearch && c.fieldPerson && c.fieldPerson.toLowerCase().includes(q)) fieldSet.add(c.fieldPerson);
+      if (!isPinSearch && c.computerPerson && c.computerPerson.toLowerCase().includes(q)) computerSet.add(c.computerPerson);
+      if (c.pinCode && c.pinCode.includes(q)) pinSet.add(c.pinCode);
     }
 
     const result: Suggestion[] = [...clientMatches];
+    for (const pin of [...pinSet].slice(0, 5)) result.push({ type: "pin", label: pin });
     for (const city of [...citySet].slice(0, 4)) result.push({ type: "city", label: city });
     for (const state of [...stateSet].slice(0, 3)) result.push({ type: "state", label: state });
     for (const p of [...fieldSet].slice(0, 3)) result.push({ type: "field", label: p });
@@ -321,6 +354,14 @@ export default function MapPage() {
       setSearchQuery(s.label);
       setUserLocation(null);
       setSelectedClient(null);
+    } else if (s.type === "pin") {
+      const filtered = (allClientsData as Client[]).filter(
+        (c) => c.pinCode === s.label
+      );
+      setLocalFilterClients(filtered);
+      setSearchQuery(s.label);
+      setUserLocation(null);
+      setSelectedClient(null);
     }
   };
 
@@ -350,12 +391,12 @@ export default function MapPage() {
     cityGroups.forEach(({ lat, lng, count }) => {
       const circle = new google.maps.Circle({
         center: { lat, lng },
-        radius: 800 + count * 400,
-        fillColor: "#f59e0b",
-        fillOpacity: 0.05,
-        strokeColor: "#f59e0b",
-        strokeOpacity: 0.2,
-        strokeWeight: 1,
+        radius: 900 + count * 500,
+        fillColor: "#10b981",
+        fillOpacity: 0.10,
+        strokeColor: "#059669",
+        strokeOpacity: 0.30,
+        strokeWeight: 1.5,
         map: googleMapRef.current!,
         zIndex: 0,
       });
@@ -659,6 +700,7 @@ export default function MapPage() {
     state: <MapPin className="h-3 w-3 text-blue-500 shrink-0" />,
     field: <User className="h-3 w-3 text-emerald-500 shrink-0" />,
     computer: <Monitor className="h-3 w-3 text-violet-500 shrink-0" />,
+    pin: <Hash className="h-3 w-3 text-rose-500 shrink-0" />,
   };
   const SUGGESTION_BADGE: Record<string, string> = {
     client: "bg-amber-50 text-amber-600",
@@ -666,6 +708,7 @@ export default function MapPage() {
     state: "bg-blue-50 text-blue-600",
     field: "bg-emerald-50 text-emerald-600",
     computer: "bg-violet-50 text-violet-600",
+    pin: "bg-rose-50 text-rose-600",
   };
   const SUGGESTION_BADGE_LABEL: Record<string, string> = {
     client: "Client",
@@ -673,6 +716,7 @@ export default function MapPage() {
     state: "State",
     field: "Field",
     computer: "Computer",
+    pin: "PIN",
   };
 
   const isLoading = clientsLoading || nearbyLoading;
@@ -820,6 +864,14 @@ export default function MapPage() {
             <h1 className="text-[15px] font-bold text-slate-900 leading-tight tracking-tight">LLI Client Map</h1>
             <p className="text-[9px] text-slate-400 mt-0.5 uppercase tracking-widest">Location Intelligence</p>
           </div>
+          <Link
+            to="/team"
+            className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-100 hover:bg-indigo-50 text-slate-500 hover:text-indigo-600 transition-colors text-[10px] font-semibold"
+            title="Team Performance"
+          >
+            <Users className="h-3 w-3" />
+            Team
+          </Link>
           <button
             onClick={() => setShowStats(s => !s)}
             className={`p-1.5 rounded-lg transition-colors ${showStats ? "bg-amber-100 text-amber-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"}`}
@@ -947,45 +999,51 @@ export default function MapPage() {
 
       {/* Selected client — desktop overlay */}
       {selectedClient && (
-        <div className="hidden md:block absolute top-4 right-16 bg-white border border-slate-200 rounded-2xl p-4 shadow-lg w-[280px] z-10">
-          <div className="flex items-start justify-between gap-2 mb-3">
-            <div className="min-w-0">
-              <p className="text-[14px] font-bold text-slate-900 leading-snug">{selectedClient.companyName}</p>
-              <p className="text-[10px] text-slate-400 font-mono mt-0.5">{selectedClient.companyCode}</p>
-            </div>
+        <div className="hidden md:block absolute top-4 right-16 bg-white rounded-2xl shadow-xl w-[290px] z-10 overflow-hidden border border-slate-100">
+          {/* Dark header */}
+          <div className="bg-gradient-to-br from-slate-800 to-slate-700 px-4 pt-4 pb-3 relative">
             <button
               onClick={() => setSelectedClient(null)}
-              className="text-slate-400 hover:text-slate-600 transition-colors shrink-0 p-0.5 rounded-lg hover:bg-slate-100"
+              className="absolute top-3 right-3 text-slate-400 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/10"
             >
               <X className="h-3.5 w-3.5" />
             </button>
-          </div>
-          <div className="space-y-1.5 mb-4">
-            <div className="flex items-center gap-1.5">
-              <MapPin className="h-3 w-3 text-slate-300 shrink-0" />
-              <p className="text-[11px] text-slate-600">{selectedClient.city}, {selectedClient.state} — {selectedClient.pinCode}</p>
+            <p className="text-[13px] font-bold text-white leading-snug pr-6">{selectedClient.companyName}</p>
+            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+              <span className="px-1.5 py-0.5 bg-white/15 text-white/80 rounded text-[9px] font-mono font-bold">{selectedClient.companyCode}</span>
+              {selectedClient.pinCode && (
+                <span className="px-1.5 py-0.5 bg-rose-400/25 text-rose-200 rounded text-[9px] font-mono font-bold"># {selectedClient.pinCode}</span>
+              )}
             </div>
-            {selectedClient.fieldPerson && (
-              <div className="flex items-center gap-1.5">
-                <User className="h-3 w-3 text-emerald-400 shrink-0" />
-                <p className="text-[11px] text-slate-600">{selectedClient.fieldPerson}</p>
-                <span className="text-[9px] text-emerald-500 font-medium">Field</span>
+          </div>
+
+          {/* Info cards */}
+          <div className="p-3 space-y-2">
+            <div className="flex gap-2">
+              <div className="flex-1 bg-slate-50 rounded-xl p-2.5 border border-slate-100">
+                <p className="text-[8px] text-slate-400 uppercase tracking-wider mb-0.5 flex items-center gap-1"><MapPin className="h-2 w-2" />Location</p>
+                <p className="text-[11px] text-slate-700 font-medium">{selectedClient.city}</p>
+                <p className="text-[10px] text-slate-400">{selectedClient.state}</p>
               </div>
-            )}
+              <div className="flex gap-2">
+                {selectedClient.fieldPerson && (
+                  <div className="bg-emerald-50 rounded-xl p-2.5 border border-emerald-100">
+                    <p className="text-[8px] text-emerald-500 uppercase tracking-wider mb-0.5 flex items-center gap-1"><User className="h-2 w-2" />Field</p>
+                    <p className="text-[11px] text-emerald-700 font-semibold whitespace-nowrap">{selectedClient.fieldPerson}</p>
+                  </div>
+                )}
+              </div>
+            </div>
             {selectedClient.computerPerson && (
-              <div className="flex items-center gap-1.5">
-                <Monitor className="h-3 w-3 text-violet-400 shrink-0" />
-                <p className="text-[11px] text-slate-600">{selectedClient.computerPerson}</p>
-                <span className="text-[9px] text-violet-500 font-medium">Computer</span>
+              <div className="bg-violet-50 rounded-xl p-2.5 border border-violet-100">
+                <p className="text-[8px] text-violet-500 uppercase tracking-wider mb-0.5 flex items-center gap-1"><Monitor className="h-2 w-2" />Computer Person</p>
+                <p className="text-[11px] text-violet-700 font-semibold">{selectedClient.computerPerson}</p>
               </div>
             )}
           </div>
 
-          {/* Navigation section */}
-          <div className="border-t border-slate-100 pt-3">
-            <p className="text-[9px] text-slate-400 uppercase tracking-widest font-bold mb-2 flex items-center gap-1">
-              <Route className="h-2.5 w-2.5" /> Get Directions
-            </p>
+          {/* Navigation */}
+          <div className="px-3 pb-3 border-t border-slate-100 pt-3">
             <div className="flex gap-1.5 mb-2">
               <button
                 onClick={() => getDirections("DRIVING", selectedClient)}
@@ -1012,157 +1070,121 @@ export default function MapPage() {
                 Bike
               </button>
               {routeInfo && (
-                <button
-                  onClick={clearDirections}
-                  className="w-8 flex items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-400 hover:bg-red-50 hover:border-red-200 hover:text-red-400 transition-all"
-                  title="Clear route"
-                >
+                <button onClick={clearDirections} className="w-8 flex items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-400 hover:bg-red-50 hover:border-red-200 hover:text-red-400 transition-all">
                   <X className="h-3 w-3" />
                 </button>
               )}
             </div>
-
-            {navError && (
-              <p className="text-[10px] text-red-500 bg-red-50 border border-red-100 rounded-lg px-2.5 py-1.5 mb-2 leading-relaxed">{navError}</p>
-            )}
-
+            {navError && <p className="text-[10px] text-red-500 bg-red-50 border border-red-100 rounded-lg px-2.5 py-1.5 mb-2">{navError}</p>}
             {routeInfo && (
-              <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5 mb-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1 text-[12px] font-bold text-blue-700">
-                      <Route className="h-3 w-3" />
-                      {routeInfo.distance}
-                    </div>
-                    <div className="flex items-center gap-1 text-[11px] text-blue-500">
-                      <Clock className="h-2.5 w-2.5" />
-                      {routeInfo.duration}
-                    </div>
-                  </div>
-                  <span className="text-[9px] text-blue-400 uppercase tracking-wide font-bold">
-                    {routeInfo.mode === "DRIVING" ? "🚗" : "🏍️"}
-                  </span>
+              <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 mb-2 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center gap-1 text-[12px] font-bold text-blue-700"><Route className="h-3 w-3" />{routeInfo.distance}</span>
+                  <span className="flex items-center gap-1 text-[11px] text-blue-500"><Clock className="h-2.5 w-2.5" />{routeInfo.duration}</span>
                 </div>
+                <span className="text-[9px] text-blue-400 font-bold">{routeInfo.mode === "DRIVING" ? "🚗" : "🏍️"}</span>
               </div>
             )}
-
-            {(routeInfo || navMode) && (
-              <button
-                onClick={() => openInGoogleMaps(selectedClient, (navMode ?? "DRIVING") as "DRIVING" | "TWO_WHEELER")}
-                className="w-full flex items-center justify-center gap-2 py-2 bg-green-500 hover:bg-green-600 text-white rounded-xl text-[11px] font-bold transition-colors shadow-sm shadow-green-200"
-              >
-                <ExternalLink className="h-3 w-3" />
-                Open in Google Maps
-              </button>
-            )}
+            <button
+              onClick={() => openInGoogleMaps(selectedClient, (navMode ?? "DRIVING") as "DRIVING" | "TWO_WHEELER")}
+              className="w-full flex items-center justify-center gap-2 py-2 bg-green-500 hover:bg-green-600 text-white rounded-xl text-[11px] font-bold transition-colors shadow-sm shadow-green-200"
+            >
+              <ExternalLink className="h-3 w-3" /> Open in Google Maps
+            </button>
           </div>
         </div>
       )}
 
       {/* Selected client — mobile bottom sheet */}
       {selectedClient && (
-        <div className="md:hidden absolute bottom-0 left-0 right-0 bg-white border-t border-slate-200 rounded-t-2xl p-4 z-20 shadow-xl">
-          <div className="w-8 h-1 bg-slate-200 rounded-full mx-auto mb-3" />
-          <div className="flex items-start justify-between gap-2 mb-3">
+        <div className="md:hidden absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl z-20 shadow-2xl overflow-hidden">
+          {/* Handle bar */}
+          <div className="pt-2.5 pb-1 flex justify-center">
+            <div className="w-10 h-1 bg-slate-200 rounded-full" />
+          </div>
+          {/* Header */}
+          <div className="flex items-start justify-between gap-3 px-4 pb-2 pt-1">
             <div className="min-w-0 flex-1">
-              <p className="text-[14px] font-bold text-slate-900 leading-snug">{selectedClient.companyName}</p>
-              <p className="text-[10px] text-slate-400 font-mono mt-0.5">{selectedClient.companyCode}</p>
+              <p className="text-[15px] font-bold text-slate-900 leading-tight">{selectedClient.companyName}</p>
+              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                <span className="px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] font-mono font-bold">{selectedClient.companyCode}</span>
+                {selectedClient.pinCode && (
+                  <span className="px-1.5 py-0.5 bg-rose-50 text-rose-600 rounded text-[9px] font-mono font-bold border border-rose-100"># {selectedClient.pinCode}</span>
+                )}
+              </div>
             </div>
             <button
               onClick={() => setSelectedClient(null)}
-              className="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded-lg hover:bg-slate-100 shrink-0"
+              className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 text-slate-500 active:bg-slate-200"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="grid grid-cols-3 gap-2 mb-2">
-            <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
-              <p className="text-[9px] text-slate-400 uppercase tracking-wide mb-1">City</p>
-              <p className="text-[11px] text-slate-700 font-medium">{selectedClient.city}</p>
+
+          {/* Scrollable info pills */}
+          <div className="flex gap-2 px-4 pb-3 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+            <div className="flex-none flex items-center gap-1.5 px-3 py-2 bg-slate-50 border border-slate-100 rounded-2xl">
+              <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
+              <span className="text-[11px] text-slate-600 font-medium whitespace-nowrap">{selectedClient.city}, {selectedClient.state}</span>
             </div>
-            <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
-              <p className="text-[9px] text-slate-400 uppercase tracking-wide mb-1">State</p>
-              <p className="text-[11px] text-slate-700 font-medium">{selectedClient.state}</p>
-            </div>
-            <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
-              <p className="text-[9px] text-slate-400 uppercase tracking-wide mb-1">PIN</p>
-              <p className="text-[11px] text-slate-700 font-medium font-mono">{selectedClient.pinCode}</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2 mb-3">
-            <div className="bg-emerald-50 rounded-xl p-2.5 border border-emerald-100">
-              <p className="text-[9px] text-emerald-500 uppercase tracking-wide mb-1">Field Person</p>
-              <p className="text-[11px] text-emerald-700 font-semibold truncate">{selectedClient.fieldPerson || "—"}</p>
-            </div>
-            <div className="bg-violet-50 rounded-xl p-2.5 border border-violet-100">
-              <p className="text-[9px] text-violet-400 uppercase tracking-wide mb-1">Computer Person</p>
-              <p className="text-[11px] text-violet-700 font-semibold truncate">{selectedClient.computerPerson || "—"}</p>
-            </div>
+            {selectedClient.fieldPerson && (
+              <div className="flex-none flex items-center gap-1.5 px-3 py-2 bg-emerald-50 border border-emerald-100 rounded-2xl">
+                <User className="h-3 w-3 text-emerald-500 shrink-0" />
+                <span className="text-[11px] text-emerald-700 font-semibold whitespace-nowrap">{selectedClient.fieldPerson}</span>
+              </div>
+            )}
+            {selectedClient.computerPerson && (
+              <div className="flex-none flex items-center gap-1.5 px-3 py-2 bg-violet-50 border border-violet-100 rounded-2xl">
+                <Monitor className="h-3 w-3 text-violet-500 shrink-0" />
+                <span className="text-[11px] text-violet-700 font-semibold whitespace-nowrap">{selectedClient.computerPerson}</span>
+              </div>
+            )}
           </div>
 
-          {/* Navigation — mobile */}
-          <div className="border-t border-slate-100 pt-3">
-            <div className="flex gap-2 mb-2">
+          {/* Navigation */}
+          <div className="px-4 pb-6 pt-3 border-t border-slate-100 space-y-2.5">
+            <div className="flex gap-2">
               <button
                 onClick={() => getDirections("DRIVING", selectedClient)}
                 disabled={navLoading}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[12px] font-bold border transition-all ${
-                  navMode === "DRIVING"
-                    ? "bg-blue-500 border-blue-500 text-white"
-                    : "bg-slate-50 border-slate-200 text-slate-600 active:bg-blue-50"
+                className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl text-[13px] font-bold border transition-all ${
+                  navMode === "DRIVING" ? "bg-blue-500 border-blue-500 text-white" : "bg-slate-50 border-slate-200 text-slate-700 active:bg-blue-50"
                 } disabled:opacity-50`}
               >
-                {navLoading && navMode === "DRIVING" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Car className="h-3.5 w-3.5" />}
+                {navLoading && navMode === "DRIVING" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Car className="h-4 w-4" />}
                 Car
               </button>
               <button
                 onClick={() => getDirections("TWO_WHEELER", selectedClient)}
                 disabled={navLoading}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[12px] font-bold border transition-all ${
-                  navMode === "TWO_WHEELER"
-                    ? "bg-blue-500 border-blue-500 text-white"
-                    : "bg-slate-50 border-slate-200 text-slate-600 active:bg-blue-50"
+                className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl text-[13px] font-bold border transition-all ${
+                  navMode === "TWO_WHEELER" ? "bg-blue-500 border-blue-500 text-white" : "bg-slate-50 border-slate-200 text-slate-700 active:bg-blue-50"
                 } disabled:opacity-50`}
               >
-                {navLoading && navMode === "TWO_WHEELER" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bike className="h-3.5 w-3.5" />}
+                {navLoading && navMode === "TWO_WHEELER" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bike className="h-4 w-4" />}
                 Bike
               </button>
               {routeInfo && (
-                <button
-                  onClick={clearDirections}
-                  className="w-11 flex items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-400 active:bg-red-50 active:text-red-400 transition-all"
-                >
+                <button onClick={clearDirections} className="w-12 flex items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-400 active:bg-red-50 active:text-red-400">
                   <X className="h-4 w-4" />
                 </button>
               )}
             </div>
-
-            {navError && (
-              <p className="text-[10px] text-red-500 bg-red-50 border border-red-100 rounded-lg px-2.5 py-1.5 mb-2 leading-relaxed">{navError}</p>
-            )}
-
+            {navError && <p className="text-[11px] text-red-500 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{navError}</p>}
             {routeInfo && (
-              <div className="flex items-center justify-between bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 mb-2">
+              <div className="flex items-center justify-between bg-blue-50 border border-blue-100 rounded-2xl px-4 py-2.5">
                 <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5 text-[13px] font-bold text-blue-700">
-                    <Route className="h-3.5 w-3.5" />
-                    {routeInfo.distance}
-                  </div>
-                  <div className="flex items-center gap-1 text-[12px] text-blue-500 font-medium">
-                    <Clock className="h-3 w-3" />
-                    {routeInfo.duration}
-                  </div>
+                  <span className="flex items-center gap-1.5 text-[13px] font-bold text-blue-700"><Route className="h-3.5 w-3.5" />{routeInfo.distance}</span>
+                  <span className="flex items-center gap-1 text-[12px] text-blue-500 font-medium"><Clock className="h-3 w-3" />{routeInfo.duration}</span>
                 </div>
                 <span className="text-base">{routeInfo.mode === "DRIVING" ? "🚗" : "🏍️"}</span>
               </div>
             )}
-
             <button
               onClick={() => openInGoogleMaps(selectedClient, (navMode ?? "DRIVING") as "DRIVING" | "TWO_WHEELER")}
-              className="w-full flex items-center justify-center gap-2 py-3 bg-green-500 hover:bg-green-600 active:bg-green-700 text-white rounded-xl text-[13px] font-bold transition-colors"
+              className="w-full flex items-center justify-center gap-2 py-3.5 bg-green-500 active:bg-green-600 text-white rounded-2xl text-[14px] font-bold transition-colors"
             >
-              <ExternalLink className="h-4 w-4" />
-              Open in Google Maps
+              <ExternalLink className="h-4 w-4" /> Open in Google Maps
             </button>
           </div>
         </div>

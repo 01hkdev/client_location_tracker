@@ -4,6 +4,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import MapPage from "@/pages/MapPage";
+import StaffPage from "@/pages/StaffPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,6 +21,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={MapPage} />
+      <Route path="/team" component={StaffPage} />
       <Route component={NotFound} />
     </Switch>
   );
