@@ -61,7 +61,6 @@ function ClientCard({ client, onClick, selected, distance }: {
           {client.fieldPerson && <p className="text-xs text-slate-500 mt-0.5">{client.fieldPerson}</p>}
         </div>
         <div className="flex flex-col items-end gap-1.5 shrink-0">
-          <StatusBadge status={client.status} />
           {distance !== undefined && (
             <span className="text-[11px] font-semibold text-amber-400 tabular-nums">
               {distance.toFixed(1)} km
@@ -81,7 +80,7 @@ function loadMapsApi(): Promise<void> {
   mapsScriptPromise = new Promise<void>((resolve, reject) => {
     const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&loading=async&libraries=marker`;
     script.async = true;
     script.defer = true;
     script.onload = () => resolve();
@@ -89,6 +88,22 @@ function loadMapsApi(): Promise<void> {
     document.head.appendChild(script);
   });
   return mapsScriptPromise;
+}
+
+function createEmojiIcon(emoji: string, size: number): google.maps.Icon {
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  ctx.font = `${Math.round(size * 0.85)}px serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  ctx.fillText(emoji, size / 2, size);
+  return {
+    url: canvas.toDataURL(),
+    scaledSize: new window.google.maps.Size(size, size),
+    anchor: new window.google.maps.Point(size / 2, size),
+  };
 }
 
 export default function MapPage() {
@@ -105,6 +120,7 @@ export default function MapPage() {
   const mapRef = useRef<HTMLDivElement>(null);
   const googleMapRef = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
+  const circlesRef = useRef<google.maps.Circle[]>([]);
   const userMarkerRef = useRef<google.maps.Marker | null>(null);
   const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
   const clustererRef = useRef<import("@googlemaps/markerclusterer").MarkerClusterer | null>(null);
@@ -134,6 +150,10 @@ export default function MapPage() {
   ) => {
     if (!googleMapRef.current || !window.google?.maps) return;
 
+    // Clear previous circles
+    circlesRef.current.forEach((c) => c.setMap(null));
+    circlesRef.current = [];
+
     if (clustererRef.current) {
       clustererRef.current.clearMarkers();
       clustererRef.current = null;
@@ -144,40 +164,62 @@ export default function MapPage() {
 
     const { MarkerClusterer } = await import("@googlemaps/markerclusterer");
 
+    // Coverage circles — group by unique coordinate bucket (≈ same city)
+    const cityGroups = new Map<string, { lat: number; lng: number; count: number }>();
+    displayList.forEach((client) => {
+      const key = `${client.latitude.toFixed(2)},${client.longitude.toFixed(2)}`;
+      if (!cityGroups.has(key)) {
+        cityGroups.set(key, { lat: client.latitude, lng: client.longitude, count: 0 });
+      }
+      cityGroups.get(key)!.count++;
+    });
+
+    cityGroups.forEach(({ lat, lng, count }) => {
+      const circle = new window.google.maps.Circle({
+        center: { lat, lng },
+        radius: 1500 + count * 600,
+        fillColor: "#1e3a5f",
+        fillOpacity: 0.10,
+        strokeColor: "#1e3a5f",
+        strokeOpacity: 0.25,
+        strokeWeight: 1.5,
+        map: googleMapRef.current!,
+        zIndex: 0,
+      });
+      circlesRef.current.push(circle);
+    });
+
+    // 📍 emoji markers via canvas
+    const bounds = new window.google.maps.LatLngBounds();
+
     const newMarkers = displayList.map((client) => {
       const isNearby = hasUserLoc && "distanceKm" in client;
       const isSelected = selected?.id === client.id;
+      const size = isSelected ? 40 : isNearby ? 32 : 28;
+      const icon = createEmojiIcon("📍", size);
+
       const marker = new window.google.maps.Marker({
         position: { lat: client.latitude, lng: client.longitude },
         title: client.companyName,
-        icon: {
-          path: window.google.maps.SymbolPath.CIRCLE,
-          scale: isSelected ? 11 : isNearby ? 8 : 7,
-          fillColor: isSelected ? "#f59e0b" : isNearby ? "#38bdf8" : "#1e3a5f",
-          fillOpacity: 1,
-          strokeColor: "#ffffff",
-          strokeWeight: 2,
-        },
+        icon,
         zIndex: isSelected ? 100 : isNearby ? 50 : 10,
       });
+
+      bounds.extend({ lat: client.latitude, lng: client.longitude });
 
       marker.addListener("click", () => {
         setSelectedClient(client);
         if (infoWindowRef.current && googleMapRef.current) {
           const distHtml = "distanceKm" in client
-            ? `<div style="color:#d97706;font-weight:600;font-size:11px;margin-top:6px;">${(client as ClientWithDistance).distanceKm.toFixed(1)} km away</div>`
+            ? `<div style="color:#d97706;font-weight:600;font-size:11px;margin-top:6px;">📍 ${(client as ClientWithDistance).distanceKm.toFixed(1)} km away</div>`
             : "";
-          const sc = client.status;
-          const bg = sc === "active" ? "#d1fae5" : sc === "inactive" ? "#f3f4f6" : "#fef3c7";
-          const fg = sc === "active" ? "#065f46" : sc === "inactive" ? "#4b5563" : "#92400e";
           infoWindowRef.current.setContent(`
             <div style="font-family:Inter,system-ui,sans-serif;padding:6px 4px;min-width:200px;max-width:240px;">
               <div style="font-weight:700;font-size:14px;color:#0f1e35;line-height:1.3;margin-bottom:3px;">${client.companyName}</div>
               <div style="font-size:11px;color:#6b7280;font-family:monospace;margin-bottom:8px;">${client.companyCode}</div>
               <div style="font-size:12px;color:#374151;margin-bottom:3px;"><span style="color:#9ca3af;">City</span>&nbsp;${client.city}, ${client.state}</div>
               <div style="font-size:12px;color:#374151;margin-bottom:3px;"><span style="color:#9ca3af;">PIN</span>&nbsp;${client.pinCode}</div>
-              <div style="font-size:12px;color:#374151;margin-bottom:8px;"><span style="color:#9ca3af;">Field</span>&nbsp;${client.fieldPerson}</div>
-              <span style="background:${bg};color:${fg};padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;">${client.status}</span>
+              <div style="font-size:12px;color:#374151;"><span style="color:#9ca3af;">Field</span>&nbsp;${client.fieldPerson}</div>
               ${distHtml}
             </div>
           `);
@@ -190,6 +232,11 @@ export default function MapPage() {
 
     markersRef.current = newMarkers;
     clustererRef.current = new MarkerClusterer({ map: googleMapRef.current, markers: newMarkers });
+
+    // Auto-fit to show all client pins (only if not following user location)
+    if (!hasUserLoc && !selected) {
+      googleMapRef.current.fitBounds(bounds, 60);
+    }
   }, []);
 
   // Load Google Maps using official async loader
@@ -200,8 +247,8 @@ export default function MapPage() {
         if (cancelled) return;
         if (!mapRef.current) return;
         const map = new window.google.maps.Map(mapRef.current, {
-          center: { lat: 20.5937, lng: 78.9629 },
-          zoom: 5,
+          center: { lat: 28.6139, lng: 77.2090 },
+          zoom: 11,
           mapTypeControl: false,
           streetViewControl: false,
           fullscreenControl: false,
@@ -286,8 +333,8 @@ export default function MapPage() {
   const handleClearLocation = () => {
     setUserLocation(null);
     if (googleMapRef.current) {
-      googleMapRef.current.setCenter({ lat: 20.5937, lng: 78.9629 });
-      googleMapRef.current.setZoom(5);
+      googleMapRef.current.setCenter({ lat: 28.6139, lng: 77.2090 });
+      googleMapRef.current.setZoom(11);
     }
   };
 
@@ -397,16 +444,6 @@ export default function MapPage() {
             )}
           </div>
         )}
-        {!statsLoading && stats && (stats.byStatus?.length ?? 0) > 0 && (
-          <div className="flex gap-3 mt-2.5 flex-wrap">
-            {stats.byStatus?.map((s) => (
-              <div key={s.status} className="flex items-center gap-1.5">
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${s.status === "active" ? "bg-emerald-400" : s.status === "inactive" ? "bg-slate-500" : "bg-amber-400"}`} />
-                <span className="text-[11px] text-slate-400 capitalize">{s.status}: <strong className="text-slate-300 font-semibold">{s.count}</strong></span>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Client list */}
@@ -475,10 +512,9 @@ export default function MapPage() {
         <div className="absolute bottom-6 left-4 bg-white/95 backdrop-blur-sm border border-slate-200 rounded-xl p-3 shadow-lg text-xs z-10 pointer-events-none">
           <p className="font-bold text-slate-700 text-[10px] uppercase tracking-widest mb-2">Legend</p>
           <div className="space-y-1.5">
-            <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#1e3a5f] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">Client</span></div>
-            {userLocation && <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#38bdf8] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">Nearby</span></div>}
-            <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#f59e0b] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">Selected</span></div>
+            <div className="flex items-center gap-2"><span className="text-base leading-none">📍</span><span className="text-slate-600">Client location</span></div>
             {userLocation && <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#6366f1] border-2 border-white shadow-sm shrink-0" /><span className="text-slate-600">You</span></div>}
+            <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#1e3a5f]/30 border border-[#1e3a5f]/40 shrink-0" /><span className="text-slate-600">Coverage area</span></div>
           </div>
         </div>
       )}
