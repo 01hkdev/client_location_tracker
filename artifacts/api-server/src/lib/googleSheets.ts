@@ -66,7 +66,6 @@ export async function getClientsFromSheet(): Promise<SheetClient[]> {
     return -1;
   }
 
-  // Map to exact column names from the sheet headers
   const statusIdx   = colIdx(["company status"]);
   const snIdx       = colIdx(["s.no", "sno", "s.n"]);
   const codeIdx     = colIdx(["company code"]);
@@ -95,10 +94,10 @@ export async function getClientsFromSheet(): Promise<SheetClient[]> {
     const geoStatus = geoIdx >= 0 ? (row[geoIdx] ?? "") : "";
     if (geoIdx >= 0 && geoStatus && !geoStatus.toLowerCase().includes("done") && !geoStatus.toLowerCase().includes("pin")) continue;
 
-    const rawStatus = statusIdx >= 0 ? (row[statusIdx] ?? "").toLowerCase() : "active";
-    // Only include ACTIVE clients — skip CLOSED, INACTIVE, PROSPECT, OFFICE, HOLD, etc.
-    if (rawStatus && !rawStatus.includes("active")) continue;
-    const status = "active";
+    const rawStatus = statusIdx >= 0 ? (row[statusIdx] ?? "").trim().toLowerCase() : "active";
+    // Skip only CLOSED clients — fetch all others (ACTIVE, NIL, HOLD, PROSPECT, etc.)
+    if (rawStatus === "closed") continue;
+    const status = rawStatus || "active";
 
     const sn = snIdx >= 0 ? row[snIdx] ?? "" : "";
     const code = codeIdx >= 0 ? row[codeIdx] ?? "" : "";

@@ -3,8 +3,8 @@ import { setOptions, importLibrary } from "@googlemaps/js-api-loader";
 import { useListClients, useGetNearbyClients, useGetClientStats } from "@workspace/api-client-react";
 import {
   Search, MapPin, Navigation,
-  X, Loader2, BarChart2, List, Map as MapIcon,
-  Car, Bike, ExternalLink, Clock, Route,
+  X, Loader2, BarChart2,
+  Car, Bike, ExternalLink, Clock, Route, User, Monitor, Building2,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,28 +25,135 @@ type Client = {
 };
 type ClientWithDistance = Client & { distanceKm: number };
 
-const STATUS_DOT: Record<string, string> = {
-  active: "bg-emerald-500",
-  inactive: "bg-slate-400",
-  prospect: "bg-amber-500",
-  office: "bg-blue-500",
-};
-const STATUS_PILL: Record<string, string> = {
-  active: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-  inactive: "bg-slate-100 text-slate-500 ring-slate-200",
-  prospect: "bg-amber-50 text-amber-700 ring-amber-200",
-  office: "bg-blue-50 text-blue-700 ring-blue-200",
+type Suggestion =
+  | { type: "client"; label: string; client: Client }
+  | { type: "city"; label: string }
+  | { type: "state"; label: string }
+  | { type: "field"; label: string }
+  | { type: "computer"; label: string };
+
+setOptions({
+  key: import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string,
+  v: "weekly",
+});
+
+const DELHI = { lat: 28.6139, lng: 77.2090 };
+
+const MAP_STYLES: google.maps.MapTypeStyle[] = [
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#dbeafe" }] },
+  { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#f8fafc" }] },
+  { featureType: "landscape.man_made", elementType: "geometry", stylers: [{ color: "#f1f5f9" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#e2e8f0" }] },
+  { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#f1f5f9" }] },
+  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#e2e8f0" }, { weight: 0.5 }] },
+  { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#cbd5e1" }, { weight: 1 }] },
+  { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#94a3b8" }, { weight: 1.5 }] },
+  { featureType: "administrative.province", elementType: "geometry.stroke", stylers: [{ color: "#cbd5e1" }, { weight: 0.8 }] },
+  { featureType: "administrative", elementType: "labels.text.fill", stylers: [{ color: "#64748b" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#94a3b8" }] },
+  { featureType: "poi", stylers: [{ visibility: "off" }] },
+  { featureType: "transit", stylers: [{ visibility: "off" }] },
+];
+
+const STATUS_COLORS: Record<string, string> = {
+  active: "#10b981",
+  closed: "#ef4444",
+  nil: "#94a3b8",
+  hold: "#f97316",
+  prospect: "#f59e0b",
+  office: "#3b82f6",
+  inactive: "#94a3b8",
 };
 
-function StatusPill({ status }: { status: string }) {
-  const key = status.toLowerCase();
-  const cls = STATUS_PILL[key] ?? "bg-slate-100 text-slate-500 ring-slate-200";
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ring-1 ${cls}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[key] ?? "bg-slate-400"}`} />
-      {status}
-    </span>
-  );
+function makeMarkerIcon(
+  isSelected: boolean,
+  _isNearby: boolean,
+  status: string,
+  name: string
+): google.maps.Icon {
+  const circleD = isSelected ? 44 : 34;
+  const pad = 4;
+  const textH = 15;
+  const shortName = name.length > 16 ? name.substring(0, 15) + "…" : name;
+
+  const tmpCanvas = document.createElement("canvas");
+  const tmpCtx = tmpCanvas.getContext("2d")!;
+  tmpCtx.font = `bold 9px Inter, Arial, sans-serif`;
+  const tw = tmpCtx.measureText(shortName).width + 8;
+
+  const canvasW = Math.max(circleD + pad * 2, tw + 8);
+  const canvasH = circleD + pad * 2 + textH + 4;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = canvasW;
+  canvas.height = canvasH;
+  const ctx = canvas.getContext("2d")!;
+
+  const cx = canvasW / 2;
+  const cy = circleD / 2 + pad;
+  const r = circleD / 2 - 3;
+
+  const fillColor = isSelected
+    ? "#f59e0b"
+    : (STATUS_COLORS[status.toLowerCase()] ?? "#6366f1");
+
+  if (isSelected) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r + 5, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(251,191,36,0.18)";
+    ctx.fill();
+  }
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = fillColor;
+  ctx.shadowColor = fillColor;
+  ctx.shadowBlur = isSelected ? 10 : 5;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = isSelected ? 3 : 2;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(cx - r * 0.25, cy - r * 0.25, r * 0.2, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.fill();
+
+  // Name label below the circle
+  const labelY = cy + r + 5;
+  const labelW = Math.min(tw + 2, canvasW - 4);
+  ctx.fillStyle = "rgba(255,255,255,0.92)";
+  ctx.beginPath();
+  const lx = cx - labelW / 2;
+  const lr = 3;
+  ctx.moveTo(lx + lr, labelY);
+  ctx.lineTo(lx + labelW - lr, labelY);
+  ctx.quadraticCurveTo(lx + labelW, labelY, lx + labelW, labelY + lr);
+  ctx.lineTo(lx + labelW, labelY + textH - lr);
+  ctx.quadraticCurveTo(lx + labelW, labelY + textH, lx + labelW - lr, labelY + textH);
+  ctx.lineTo(lx + lr, labelY + textH);
+  ctx.quadraticCurveTo(lx, labelY + textH, lx, labelY + textH - lr);
+  ctx.lineTo(lx, labelY + lr);
+  ctx.quadraticCurveTo(lx, labelY, lx + lr, labelY);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.font = `bold 9px Inter, Arial, sans-serif`;
+  ctx.fillStyle = "#1e293b";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(shortName, cx, labelY + textH / 2);
+
+  return {
+    url: canvas.toDataURL(),
+    scaledSize: new google.maps.Size(canvasW, canvasH),
+    anchor: new google.maps.Point(cx, cy),
+  };
 }
 
 function ClientCard({ client, onClick, selected, distance }: {
@@ -82,99 +189,19 @@ function ClientCard({ client, onClick, selected, distance }: {
             )}
           </div>
         </div>
-        <div className="flex flex-col items-end gap-1.5 shrink-0 pt-0.5">
-          <StatusPill status={client.status} />
-          {distance !== undefined && (
-            <span className="text-[11px] font-bold text-amber-600 tabular-nums">{distance.toFixed(1)} km</span>
-          )}
-        </div>
+        {distance !== undefined && (
+          <span className="text-[11px] font-bold text-amber-600 tabular-nums shrink-0 pt-0.5">{distance.toFixed(1)} km</span>
+        )}
       </div>
     </button>
   );
 }
 
-setOptions({
-  key: import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string,
-  v: "weekly",
-});
-
-const DELHI = { lat: 28.6139, lng: 77.2090 };
-
-const MAP_STYLES: google.maps.MapTypeStyle[] = [
-  { featureType: "water", elementType: "geometry", stylers: [{ color: "#dbeafe" }] },
-  { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#f8fafc" }] },
-  { featureType: "landscape.man_made", elementType: "geometry", stylers: [{ color: "#f1f5f9" }] },
-  { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
-  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#e2e8f0" }] },
-  { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#f1f5f9" }] },
-  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#e2e8f0" }, { weight: 0.5 }] },
-  { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#cbd5e1" }, { weight: 1 }] },
-  { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#94a3b8" }, { weight: 1.5 }] },
-  { featureType: "administrative.province", elementType: "geometry.stroke", stylers: [{ color: "#cbd5e1" }, { weight: 0.8 }] },
-  { featureType: "administrative", elementType: "labels.text.fill", stylers: [{ color: "#64748b" }] },
-  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#94a3b8" }] },
-  { featureType: "poi", stylers: [{ visibility: "off" }] },
-  { featureType: "transit", stylers: [{ visibility: "off" }] },
-];
-
-function makeMarkerIcon(isSelected: boolean, isNearby: boolean, status: string): google.maps.Icon {
-  const size = isSelected ? 44 : 34;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d")!;
-
-  const colors: Record<string, string> = {
-    active: "#10b981",
-    inactive: "#94a3b8",
-    prospect: "#f59e0b",
-    office: "#3b82f6",
-  };
-  const fillColor = isSelected ? "#f59e0b" : (colors[status.toLowerCase()] ?? "#6366f1");
-  const r = size / 2 - 3;
-  const cx = size / 2;
-  const cy = size / 2;
-
-  if (isSelected) {
-    ctx.beginPath();
-    ctx.arc(cx, cy, r + 4, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(251,191,36,0.2)";
-    ctx.fill();
-  }
-
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = fillColor;
-  ctx.shadowColor = fillColor;
-  ctx.shadowBlur = isSelected ? 10 : 5;
-  ctx.fill();
-  ctx.shadowBlur = 0;
-
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = isSelected ? 3 : 2;
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.arc(cx - r * 0.25, cy - r * 0.25, r * 0.2, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(255,255,255,0.6)";
-  ctx.fill();
-
-  return {
-    url: canvas.toDataURL(),
-    scaledSize: new google.maps.Size(size, size),
-    anchor: new google.maps.Point(size / 2, size / 2),
-  };
-}
-
-const STATUS_FILTERS = ["all", "active", "inactive", "prospect", "office"] as const;
-type StatusFilter = (typeof STATUS_FILTERS)[number];
-
 export default function MapPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [committedSearch, setCommittedSearch] = useState("Delhi");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [localFilterClients, setLocalFilterClients] = useState<Client[] | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationLoading, setLocationLoading] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
@@ -198,6 +225,7 @@ export default function MapPage() {
   const directionsServiceRef = useRef<google.maps.DirectionsService | null>(null);
   const directionsRendererRef = useRef<google.maps.DirectionsRenderer | null>(null);
   const userLocationRef = useRef<{ lat: number; lng: number } | null>(null);
+  const searchWrapRef = useRef<HTMLDivElement>(null);
 
   const apiFilterParams = useMemo(() => {
     if (userLocation) return {};
@@ -208,6 +236,10 @@ export default function MapPage() {
   }, [committedSearch, userLocation]);
 
   const { data: rawClients, isLoading: clientsLoading } = useListClients(apiFilterParams);
+  const { data: allClientsData } = useListClients(
+    {},
+    { query: { staleTime: 5 * 60 * 1000, queryKey: ["clients-all-suggestions"] } }
+  );
   const { data: stats, isLoading: statsLoading } = useGetClientStats();
   const { data: nearbyClients, isLoading: nearbyLoading } = useGetNearbyClients(
     { lat: userLocation?.lat ?? 0, lng: userLocation?.lng ?? 0, radius: 50 },
@@ -215,12 +247,82 @@ export default function MapPage() {
   );
 
   const allDisplayClients: (Client | ClientWithDistance)[] = useMemo(() => {
-    const base = userLocation
+    if (localFilterClients) return localFilterClients;
+    return userLocation
       ? (Array.isArray(nearbyClients) ? nearbyClients : [])
       : (Array.isArray(rawClients) ? rawClients : []);
-    if (statusFilter === "all") return base;
-    return base.filter((c) => c.status.toLowerCase() === statusFilter);
-  }, [userLocation, nearbyClients, rawClients, statusFilter]);
+  }, [userLocation, nearbyClients, rawClients, localFilterClients]);
+
+  // Build smart suggestions from typed query
+  const suggestions: Suggestion[] = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q || q.length < 2 || !allClientsData) return [];
+    const clients = allClientsData as Client[];
+
+    const clientMatches: Suggestion[] = [];
+    const citySet = new Set<string>();
+    const stateSet = new Set<string>();
+    const fieldSet = new Set<string>();
+    const computerSet = new Set<string>();
+
+    for (const c of clients) {
+      if (c.companyName.toLowerCase().includes(q) && clientMatches.length < 5)
+        clientMatches.push({ type: "client", label: c.companyName, client: c });
+      if (c.city.toLowerCase().includes(q)) citySet.add(c.city);
+      if (c.state.toLowerCase().includes(q)) stateSet.add(c.state);
+      if (c.fieldPerson && c.fieldPerson.toLowerCase().includes(q)) fieldSet.add(c.fieldPerson);
+      if (c.computerPerson && c.computerPerson.toLowerCase().includes(q)) computerSet.add(c.computerPerson);
+    }
+
+    const result: Suggestion[] = [...clientMatches];
+    for (const city of [...citySet].slice(0, 4)) result.push({ type: "city", label: city });
+    for (const state of [...stateSet].slice(0, 3)) result.push({ type: "state", label: state });
+    for (const p of [...fieldSet].slice(0, 3)) result.push({ type: "field", label: p });
+    for (const p of [...computerSet].slice(0, 3)) result.push({ type: "computer", label: p });
+    return result.slice(0, 14);
+  }, [searchQuery, allClientsData]);
+
+  const handleSuggestionClick = (s: Suggestion) => {
+    setShowSuggestions(false);
+    if (s.type === "client") {
+      setLocalFilterClients(null);
+      setSearchQuery(s.client.city);
+      setCommittedSearch(s.client.city);
+      setUserLocation(null);
+      setSelectedClient(s.client);
+      setMobileTab("map");
+    } else if (s.type === "city") {
+      setLocalFilterClients(null);
+      setSearchQuery(s.label);
+      setCommittedSearch(s.label);
+      setUserLocation(null);
+      setSelectedClient(null);
+    } else if (s.type === "state") {
+      const filtered = (allClientsData as Client[]).filter(
+        (c) => c.state.toLowerCase() === s.label.toLowerCase()
+      );
+      setLocalFilterClients(filtered);
+      setSearchQuery(s.label);
+      setUserLocation(null);
+      setSelectedClient(null);
+    } else if (s.type === "field") {
+      const filtered = (allClientsData as Client[]).filter(
+        (c) => c.fieldPerson.toLowerCase() === s.label.toLowerCase()
+      );
+      setLocalFilterClients(filtered);
+      setSearchQuery(s.label);
+      setUserLocation(null);
+      setSelectedClient(null);
+    } else if (s.type === "computer") {
+      const filtered = (allClientsData as Client[]).filter(
+        (c) => (c.computerPerson ?? "").toLowerCase() === s.label.toLowerCase()
+      );
+      setLocalFilterClients(filtered);
+      setSearchQuery(s.label);
+      setUserLocation(null);
+      setSelectedClient(null);
+    }
+  };
 
   const updateMarkers = useCallback(async (
     list: (Client | ClientWithDistance)[],
@@ -236,7 +338,7 @@ export default function MapPage() {
     markersRef.current = [];
     if (!list.length) return;
 
-    const { MarkerClusterer, DefaultRenderer } = await import("@googlemaps/markerclusterer");
+    const { MarkerClusterer } = await import("@googlemaps/markerclusterer");
 
     const cityGroups = new Map<string, { lat: number; lng: number; count: number }>();
     list.forEach((c) => {
@@ -264,7 +366,7 @@ export default function MapPage() {
     const newMarkers = list.map((client) => {
       const isNearby = hasUserLoc && "distanceKm" in client;
       const isSelected = selected?.id === client.id;
-      const icon = makeMarkerIcon(isSelected, isNearby, client.status);
+      const icon = makeMarkerIcon(isSelected, isNearby, client.status, client.companyName);
       const marker = new google.maps.Marker({
         position: { lat: client.latitude, lng: client.longitude },
         title: client.companyName,
@@ -279,12 +381,16 @@ export default function MapPage() {
           const dist = "distanceKm" in client
             ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid #f1f5f9;color:#d97706;font-weight:700;font-size:11px;">📍 ${(client as ClientWithDistance).distanceKm.toFixed(1)} km away</div>` : "";
           infoWindowRef.current.setContent(`
-            <div style="font-family:Inter,system-ui,sans-serif;padding:4px 2px;min-width:200px;">
-              <div style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:2px;">${client.companyName}</div>
-              <div style="font-size:10px;color:#94a3b8;font-family:monospace;margin-bottom:8px;">${client.companyCode}</div>
-              <div style="font-size:11px;color:#475569;margin-bottom:3px;"><span style="color:#94a3b8;font-weight:600;">City</span> ${client.city}, ${client.state}</div>
-              <div style="font-size:11px;color:#475569;margin-bottom:3px;"><span style="color:#94a3b8;font-weight:600;">PIN</span> ${client.pinCode}</div>
-              <div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;">Field</span> ${client.fieldPerson}</div>
+            <div style="font-family:Inter,system-ui,sans-serif;padding:4px 2px;min-width:220px;max-width:280px;">
+              <div style="font-weight:700;font-size:14px;color:#0f172a;margin-bottom:2px;line-height:1.3;">${client.companyName}</div>
+              <div style="font-size:10px;color:#94a3b8;font-family:monospace;margin-bottom:10px;">${client.companyCode}</div>
+              <div style="display:grid;gap:5px;">
+                <div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:72px;">City</span>${client.city}</div>
+                <div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:72px;">State</span>${client.state}</div>
+                <div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:72px;">PIN Code</span>${client.pinCode}</div>
+                ${client.fieldPerson ? `<div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:72px;">Field</span>${client.fieldPerson}</div>` : ""}
+                ${client.computerPerson ? `<div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:72px;">Computer</span>${client.computerPerson}</div>` : ""}
+              </div>
               ${dist}
             </div>
           `);
@@ -295,10 +401,60 @@ export default function MapPage() {
     });
 
     markersRef.current = newMarkers;
+
+    // Custom amber cluster renderer
+    const clusterRenderer = {
+      render({ count, position }: { count: number; position: google.maps.LatLng }) {
+        const size = count > 99 ? 52 : count > 9 ? 44 : 38;
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d")!;
+        const cx = size / 2;
+        const cy = size / 2;
+        const r = size / 2 - 3;
+
+        ctx.beginPath();
+        ctx.arc(cx, cy, r + 3, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(251,191,36,0.2)";
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle = "#f59e0b";
+        ctx.shadowColor = "#f59e0b";
+        ctx.shadowBlur = 8;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+
+        ctx.font = `bold ${count > 99 ? 13 : 14}px Inter, Arial, sans-serif`;
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(count), cx, cy);
+
+        return new google.maps.Marker({
+          position,
+          icon: {
+            url: canvas.toDataURL(),
+            scaledSize: new google.maps.Size(size, size),
+            anchor: new google.maps.Point(cx, cy),
+          },
+          zIndex: 1000,
+        });
+      },
+    };
+
     clustererRef.current = new MarkerClusterer({
       map: googleMapRef.current,
       markers: newMarkers,
-      renderer: new DefaultRenderer(),
+      renderer: clusterRenderer,
     });
 
     if (!hasUserLoc && !selected && !bounds.isEmpty()) {
@@ -378,14 +534,23 @@ export default function MapPage() {
       const z = googleMapRef.current.getZoom() ?? 5;
       if (z < 12) googleMapRef.current.setZoom(12);
     }
-    if (!selectedClient) {
-      clearDirections();
-    }
+    if (!selectedClient) clearDirections();
   }, [selectedClient]);
 
   useEffect(() => {
     userLocationRef.current = userLocation;
   }, [userLocation]);
+
+  // Close suggestions when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (searchWrapRef.current && !searchWrapRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const clearDirections = () => {
     if (directionsRendererRef.current) {
@@ -461,6 +626,7 @@ export default function MapPage() {
         setLocationLoading(false);
         setCommittedSearch("");
         setSearchQuery("");
+        setLocalFilterClients(null);
       },
       () => {
         setLocationError("Location access denied. Please allow in browser settings.");
@@ -470,13 +636,16 @@ export default function MapPage() {
   };
 
   const handleSearch = () => {
+    setLocalFilterClients(null);
     setCommittedSearch(searchQuery);
     setUserLocation(null);
     setSelectedClient(null);
+    setShowSuggestions(false);
   };
 
   const handleClearLocation = () => {
     setUserLocation(null);
+    setLocalFilterClients(null);
     setSelectedClient(null);
     if (googleMapRef.current) {
       googleMapRef.current.setCenter(DELHI);
@@ -484,18 +653,32 @@ export default function MapPage() {
     }
   };
 
-  const isLoading = clientsLoading || nearbyLoading;
-
-  const STATUS_MEANING: Record<string, string> = {
-    active: "Currently doing business",
-    inactive: "No recent activity",
-    prospect: "Potential client — not yet converted",
-    office: "Our own office / branch",
+  const SUGGESTION_ICON: Record<string, React.ReactNode> = {
+    client: <Building2 className="h-3 w-3 text-amber-500 shrink-0" />,
+    city: <MapPin className="h-3 w-3 text-indigo-500 shrink-0" />,
+    state: <MapPin className="h-3 w-3 text-blue-500 shrink-0" />,
+    field: <User className="h-3 w-3 text-emerald-500 shrink-0" />,
+    computer: <Monitor className="h-3 w-3 text-violet-500 shrink-0" />,
   };
+  const SUGGESTION_BADGE: Record<string, string> = {
+    client: "bg-amber-50 text-amber-600",
+    city: "bg-indigo-50 text-indigo-600",
+    state: "bg-blue-50 text-blue-600",
+    field: "bg-emerald-50 text-emerald-600",
+    computer: "bg-violet-50 text-violet-600",
+  };
+  const SUGGESTION_BADGE_LABEL: Record<string, string> = {
+    client: "Client",
+    city: "City",
+    state: "State",
+    field: "Field",
+    computer: "Computer",
+  };
+
+  const isLoading = clientsLoading || nearbyLoading;
 
   const statsPanel = (
     <div className="px-3 py-3 shrink-0 border-b border-slate-100 space-y-3">
-      {/* Row 1 — 4 key numbers */}
       {statsLoading ? (
         <div className="grid grid-cols-4 gap-1.5">
           {[0,1,2,3].map(i => <Skeleton key={i} className="h-14 rounded-xl bg-slate-100" />)}
@@ -521,41 +704,105 @@ export default function MapPage() {
         </div>
       )}
 
-      {/* Row 2 — States list */}
+      {/* States list */}
       {!statsLoading && stats?.byState && stats.byState.length > 0 && (
         <div>
           <p className="text-[8px] text-slate-400 uppercase tracking-widest font-bold mb-1.5">States covered</p>
           <div className="flex flex-wrap gap-1">
             {stats.byState.map(({ state, count }: { state: string; count: number }) => (
-              <span key={state} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-indigo-50 border border-indigo-100 rounded-md text-[9px] font-medium text-indigo-700">
+              <button
+                key={state}
+                onClick={() => {
+                  const filtered = (allClientsData as Client[])?.filter(c => c.state === state) ?? [];
+                  setLocalFilterClients(filtered);
+                  setSearchQuery(state);
+                  setUserLocation(null);
+                  setSelectedClient(null);
+                  setShowStats(false);
+                }}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-indigo-50 border border-indigo-100 rounded-md text-[9px] font-medium text-indigo-700 hover:bg-indigo-100 transition-colors cursor-pointer"
+              >
                 {state}
                 <span className="text-indigo-400 font-mono">{count}</span>
-              </span>
+              </button>
             ))}
           </div>
         </div>
       )}
 
-      {/* Row 3 — Status legend with meanings */}
-      {!statsLoading && stats?.byStatus && stats.byStatus.length > 0 && (
+      {/* Cities list */}
+      {!statsLoading && stats?.byCity && stats.byCity.length > 0 && (
         <div>
-          <p className="text-[8px] text-slate-400 uppercase tracking-widest font-bold mb-1.5">Status legend</p>
-          <div className="space-y-1.5">
-            {stats.byStatus.map(({ status, count }: { status: string; count: number }) => {
-              const key = status.toLowerCase();
-              const meaning = STATUS_MEANING[key] ?? status;
-              return (
-                <div key={status} className="flex items-start gap-2">
-                  <div className="flex items-center gap-1.5 w-20 shrink-0 mt-0.5">
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_DOT[key] ?? "bg-slate-400"}`} />
-                    <span className="text-[10px] font-semibold text-slate-700 capitalize">{status}</span>
-                    <span className="text-[9px] text-slate-400 font-mono ml-auto">{count}</span>
-                  </div>
-                  <p className="text-[9px] text-slate-400 leading-tight">{meaning}</p>
-                </div>
-              );
-            })}
+          <p className="text-[8px] text-slate-400 uppercase tracking-widest font-bold mb-1.5">Cities covered</p>
+          <div className="flex flex-wrap gap-1">
+            {stats.byCity.map(({ city, count }: { city: string; count: number }) => (
+              <button
+                key={city}
+                onClick={() => {
+                  setLocalFilterClients(null);
+                  setSearchQuery(city);
+                  setCommittedSearch(city);
+                  setUserLocation(null);
+                  setSelectedClient(null);
+                  setShowStats(false);
+                }}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded-md text-[9px] font-medium text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                {city}
+                <span className="text-slate-400 font-mono">{count}</span>
+              </button>
+            ))}
           </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const searchBox = (isMobile: boolean) => (
+    <div ref={isMobile ? undefined : searchWrapRef} className="relative">
+      <div className={`flex gap-2 ${isMobile ? "" : ""}`}>
+        <div className="relative flex-1">
+          <Search className={`absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none ${isMobile ? "h-3 w-3" : "h-3.5 w-3.5"}`} />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setShowSuggestions(true);
+            }}
+            onFocus={() => { if (searchQuery.length >= 2) setShowSuggestions(true); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSearch();
+              if (e.key === "Escape") setShowSuggestions(false);
+            }}
+            placeholder={isMobile ? "Search clients, city, person…" : "Search by client, city, state, person…"}
+            className={`w-full pl-8 pr-3 bg-slate-50 text-slate-800 placeholder:text-slate-400 border border-slate-200 rounded-xl focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 transition-all ${isMobile ? "py-2 text-[12px]" : "py-2.5 text-[13px]"}`}
+          />
+        </div>
+        <button
+          onClick={handleSearch}
+          className={`px-3.5 bg-amber-400 hover:bg-amber-500 active:bg-amber-600 text-white rounded-xl font-bold transition-colors shrink-0 shadow-sm shadow-amber-200 ${isMobile ? "py-2 text-[12px]" : "py-2.5 text-[13px]"}`}
+        >
+          Go
+        </button>
+      </div>
+
+      {/* Suggestions dropdown */}
+      {showSuggestions && suggestions.length > 0 && (
+        <div className="absolute z-50 top-full mt-1.5 left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+          {suggestions.map((s, i) => (
+            <button
+              key={i}
+              onMouseDown={(e) => { e.preventDefault(); handleSuggestionClick(s); }}
+              className="w-full text-left flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 transition-colors border-b border-slate-50 last:border-0"
+            >
+              {SUGGESTION_ICON[s.type]}
+              <span className="flex-1 text-[12px] text-slate-700 truncate">{s.label}</span>
+              <span className={`text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded-md shrink-0 ${SUGGESTION_BADGE[s.type]}`}>
+                {SUGGESTION_BADGE_LABEL[s.type]}
+              </span>
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -584,26 +831,8 @@ export default function MapPage() {
       </div>
 
       {/* Search */}
-      <div className="px-3 py-3 shrink-0 border-b border-slate-100 space-y-2">
-        <div className="flex gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-            <input
-              type="search"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              placeholder="City, area, or PIN code…"
-              className="w-full pl-8 pr-3 py-2.5 text-[13px] bg-slate-50 text-slate-800 placeholder:text-slate-400 border border-slate-200 rounded-xl focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100 transition-all"
-            />
-          </div>
-          <button
-            onClick={handleSearch}
-            className="px-3.5 py-2.5 bg-amber-400 hover:bg-amber-500 active:bg-amber-600 text-white rounded-xl text-[13px] font-bold transition-colors shrink-0 shadow-sm shadow-amber-200"
-          >
-            Go
-          </button>
-        </div>
+      <div ref={searchWrapRef} className="px-3 py-3 shrink-0 border-b border-slate-100 space-y-2">
+        {searchBox(false)}
         {userLocation ? (
           <button
             onClick={handleClearLocation}
@@ -622,34 +851,23 @@ export default function MapPage() {
           </button>
         )}
         {locationError && <p className="text-[10px] text-red-500 px-1 leading-relaxed">{locationError}</p>}
+        {localFilterClients && (
+          <button
+            onClick={() => { setLocalFilterClients(null); setSearchQuery(""); setCommittedSearch("Delhi"); }}
+            className="w-full flex items-center justify-center gap-1.5 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-[11px] font-medium hover:bg-amber-100 transition-colors"
+          >
+            <X className="h-3 w-3" /> Clear filter — {localFilterClients.length} clients shown
+          </button>
+        )}
       </div>
 
       {/* Stats (collapsible) */}
       {showStats && statsPanel}
 
-      {/* Status filter */}
-      <div className="px-3 pt-3 pb-2 shrink-0">
-        <div className="flex gap-1 overflow-x-auto no-scrollbar">
-          {STATUS_FILTERS.map((s) => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={`shrink-0 px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wide transition-all ${
-                statusFilter === s
-                  ? "bg-amber-400 text-white shadow-sm"
-                  : "bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
-              }`}
-            >
-              {s === "all" ? "All" : s}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* List header */}
-      <div className="px-3 pb-2 flex items-center justify-between shrink-0">
+      <div className="px-3 pt-3 pb-2 flex items-center justify-between shrink-0">
         <span className="text-[9px] text-slate-400 uppercase tracking-widest font-bold">
-          {userLocation ? "Nearby Clients" : committedSearch ? `Results — ${committedSearch}` : "All Clients"}
+          {userLocation ? "Nearby Clients" : localFilterClients ? `Filtered — ${searchQuery}` : committedSearch ? `Results — ${committedSearch}` : "All Clients"}
         </span>
         {!isLoading && (
           <span className="text-[10px] text-slate-400 tabular-nums font-mono">{allDisplayClients.length}</span>
@@ -727,32 +945,12 @@ export default function MapPage() {
         </div>
       )}
 
-      {/* Legend */}
-      {mapReady && (
-        <div className="absolute bottom-5 left-4 bg-white/95 backdrop-blur-sm border border-slate-200 rounded-xl px-3 py-2.5 z-10 pointer-events-none shadow-sm">
-          <div className="flex items-center gap-3 flex-wrap">
-            {Object.entries(STATUS_DOT).map(([s, dot]) => (
-              <div key={s} className="flex items-center gap-1.5">
-                <span className={`w-2 h-2 rounded-full ${dot}`} />
-                <span className="text-[10px] text-slate-500 capitalize">{s}</span>
-              </div>
-            ))}
-            {userLocation && (
-              <div className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-indigo-500" />
-                <span className="text-[10px] text-slate-500">You</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Selected client — desktop overlay */}
       {selectedClient && (
-        <div className="hidden md:block absolute top-4 right-16 bg-white border border-slate-200 rounded-2xl p-4 shadow-lg w-[268px] z-10">
+        <div className="hidden md:block absolute top-4 right-16 bg-white border border-slate-200 rounded-2xl p-4 shadow-lg w-[280px] z-10">
           <div className="flex items-start justify-between gap-2 mb-3">
             <div className="min-w-0">
-              <p className="text-[13px] font-bold text-slate-900 leading-snug">{selectedClient.companyName}</p>
+              <p className="text-[14px] font-bold text-slate-900 leading-snug">{selectedClient.companyName}</p>
               <p className="text-[10px] text-slate-400 font-mono mt-0.5">{selectedClient.companyCode}</p>
             </div>
             <button
@@ -762,17 +960,26 @@ export default function MapPage() {
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
-          <div className="space-y-1 mb-3">
-            <p className="text-[11px] text-slate-600"><span className="text-slate-400 mr-1">City</span>{selectedClient.city}, {selectedClient.state}</p>
-            <p className="text-[11px] text-slate-600"><span className="text-slate-400 mr-1">PIN</span>{selectedClient.pinCode}</p>
+          <div className="space-y-1.5 mb-4">
+            <div className="flex items-center gap-1.5">
+              <MapPin className="h-3 w-3 text-slate-300 shrink-0" />
+              <p className="text-[11px] text-slate-600">{selectedClient.city}, {selectedClient.state} — {selectedClient.pinCode}</p>
+            </div>
             {selectedClient.fieldPerson && (
-              <p className="text-[11px] text-slate-600"><span className="text-slate-400 mr-1">Field Person</span>{selectedClient.fieldPerson}</p>
+              <div className="flex items-center gap-1.5">
+                <User className="h-3 w-3 text-emerald-400 shrink-0" />
+                <p className="text-[11px] text-slate-600">{selectedClient.fieldPerson}</p>
+                <span className="text-[9px] text-emerald-500 font-medium">Field</span>
+              </div>
             )}
             {selectedClient.computerPerson && (
-              <p className="text-[11px] text-slate-600"><span className="text-slate-400 mr-1">Computer Person</span>{selectedClient.computerPerson}</p>
+              <div className="flex items-center gap-1.5">
+                <Monitor className="h-3 w-3 text-violet-400 shrink-0" />
+                <p className="text-[11px] text-slate-600">{selectedClient.computerPerson}</p>
+                <span className="text-[9px] text-violet-500 font-medium">Computer</span>
+              </div>
             )}
           </div>
-          <div className="mb-3"><StatusPill status={selectedClient.status} /></div>
 
           {/* Navigation section */}
           <div className="border-t border-slate-100 pt-3">
@@ -856,22 +1063,19 @@ export default function MapPage() {
       {selectedClient && (
         <div className="md:hidden absolute bottom-0 left-0 right-0 bg-white border-t border-slate-200 rounded-t-2xl p-4 z-20 shadow-xl">
           <div className="w-8 h-1 bg-slate-200 rounded-full mx-auto mb-3" />
-          <div className="flex items-start justify-between gap-2">
+          <div className="flex items-start justify-between gap-2 mb-3">
             <div className="min-w-0 flex-1">
               <p className="text-[14px] font-bold text-slate-900 leading-snug">{selectedClient.companyName}</p>
               <p className="text-[10px] text-slate-400 font-mono mt-0.5">{selectedClient.companyCode}</p>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <StatusPill status={selectedClient.status} />
-              <button
-                onClick={() => setSelectedClient(null)}
-                className="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded-lg hover:bg-slate-100"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+            <button
+              onClick={() => setSelectedClient(null)}
+              className="text-slate-400 hover:text-slate-600 transition-colors p-1 rounded-lg hover:bg-slate-100 shrink-0"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
-          <div className="grid grid-cols-3 gap-2 mt-3 mb-3">
+          <div className="grid grid-cols-3 gap-2 mb-2">
             <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
               <p className="text-[9px] text-slate-400 uppercase tracking-wide mb-1">City</p>
               <p className="text-[11px] text-slate-700 font-medium">{selectedClient.city}</p>
@@ -886,9 +1090,9 @@ export default function MapPage() {
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2 mb-3">
-            <div className="bg-blue-50 rounded-xl p-2.5 border border-blue-100">
-              <p className="text-[9px] text-blue-400 uppercase tracking-wide mb-1">Field Person</p>
-              <p className="text-[11px] text-blue-700 font-semibold truncate">{selectedClient.fieldPerson || "—"}</p>
+            <div className="bg-emerald-50 rounded-xl p-2.5 border border-emerald-100">
+              <p className="text-[9px] text-emerald-500 uppercase tracking-wide mb-1">Field Person</p>
+              <p className="text-[11px] text-emerald-700 font-semibold truncate">{selectedClient.fieldPerson || "—"}</p>
             </div>
             <div className="bg-violet-50 rounded-xl p-2.5 border border-violet-100">
               <p className="text-[9px] text-violet-400 uppercase tracking-wide mb-1">Computer Person</p>
@@ -984,22 +1188,8 @@ export default function MapPage() {
             <div className="w-7 h-7 rounded-lg bg-amber-400 flex items-center justify-center shrink-0">
               <MapPin className="h-3.5 w-3.5 text-white" />
             </div>
-            <div className="flex gap-1.5 flex-1">
-              <div className="relative flex-1">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
-                <input
-                  type="search"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                  placeholder="City or PIN…"
-                  className="w-full pl-7 pr-3 py-2 text-[12px] bg-slate-50 text-slate-800 placeholder:text-slate-400 border border-slate-200 rounded-xl focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-100 transition-all"
-                />
-              </div>
-              <button
-                onClick={handleSearch}
-                className="px-3 py-2 bg-amber-400 hover:bg-amber-500 text-white rounded-xl text-[12px] font-bold transition-colors shrink-0"
-              >Go</button>
+            <div ref={searchWrapRef} className="relative flex-1 flex gap-1.5">
+              {searchBox(true)}
               <button
                 onClick={handleGetLocation}
                 disabled={locationLoading}
@@ -1017,47 +1207,64 @@ export default function MapPage() {
           <div className={`absolute inset-0 ${mobileTab === "map" ? "z-10" : "z-0"}`}>
             {mapPanel}
           </div>
-          {mobileTab === "list" && (
-            <div className="absolute inset-0 z-20 bg-white overflow-hidden">
-              {sidebar}
+          <div className={`absolute inset-0 overflow-y-auto bg-white ${mobileTab === "list" ? "z-10" : "z-0"}`}>
+            {/* Stats */}
+            {statsPanel}
+            {/* Client list */}
+            <div className="px-3 py-2">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[9px] text-slate-400 uppercase tracking-widest font-bold">
+                  {userLocation ? "Nearby Clients" : localFilterClients ? `Filtered — ${searchQuery}` : committedSearch ? `Results — ${committedSearch}` : "All Clients"}
+                </span>
+                {!isLoading && <span className="text-[10px] text-slate-400 font-mono">{allDisplayClients.length}</span>}
+              </div>
+              {isLoading ? (
+                Array.from({ length: 5 }).map((_, i) => (
+                  <Skeleton key={i} className="h-[76px] w-full rounded-xl mb-1.5 bg-slate-100" />
+                ))
+              ) : allDisplayClients.length === 0 ? (
+                <div className="text-center py-10">
+                  <MapPin className="h-8 w-8 text-slate-200 mx-auto mb-2" />
+                  <p className="text-[13px] text-slate-500">No clients found</p>
+                </div>
+              ) : (
+                allDisplayClients.map((client) => (
+                  <ClientCard
+                    key={client.id}
+                    client={client}
+                    selected={selectedClient?.id === client.id}
+                    distance={"distanceKm" in client ? (client as ClientWithDistance).distanceKm : undefined}
+                    onClick={() => { setSelectedClient(client); setMobileTab("map"); }}
+                  />
+                ))
+              )}
             </div>
-          )}
+          </div>
         </div>
 
-        {/* Mobile bottom tab bar */}
-        <div className="bg-white border-t border-slate-100 shrink-0 shadow-[0_-1px_3px_rgba(0,0,0,0.06)]">
-          <div className="flex">
-            <button
-              onClick={() => setMobileTab("map")}
-              className={`flex-1 py-3 flex items-center justify-center gap-1.5 text-[11px] font-semibold transition-colors ${
-                mobileTab === "map" ? "text-amber-500" : "text-slate-400"
-              }`}
-            >
-              <MapIcon className="h-4 w-4" />
-              Map
-            </button>
-            <button
-              onClick={() => setMobileTab("list")}
-              className={`flex-1 py-3 flex items-center justify-center gap-1.5 text-[11px] font-semibold transition-colors ${
-                mobileTab === "list" ? "text-amber-500" : "text-slate-400"
-              }`}
-            >
-              <List className="h-4 w-4" />
-              Clients
-              {!isLoading && allDisplayClients.length > 0 && (
-                <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${mobileTab === "list" ? "bg-amber-400 text-white" : "bg-slate-100 text-slate-500"}`}>
-                  {allDisplayClients.length}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => { setMobileTab("map"); handleGetLocation(); }}
-              className="flex-1 py-3 flex items-center justify-center gap-1.5 text-[11px] font-semibold text-slate-400 transition-colors"
-            >
-              <Navigation className="h-4 w-4" />
-              Nearby
-            </button>
-          </div>
+        {/* Mobile bottom nav */}
+        <div className="bg-white border-t border-slate-100 px-4 py-2 flex shrink-0">
+          <button
+            onClick={() => setMobileTab("map")}
+            className={`flex-1 flex flex-col items-center gap-0.5 py-1 rounded-xl transition-colors ${mobileTab === "map" ? "text-amber-500" : "text-slate-400"}`}
+          >
+            <MapPin className="h-4 w-4" />
+            <span className="text-[9px] font-semibold uppercase tracking-wide">Map</span>
+          </button>
+          <button
+            onClick={() => setMobileTab("list")}
+            className={`flex-1 flex flex-col items-center gap-0.5 py-1 rounded-xl transition-colors ${mobileTab === "list" ? "text-amber-500" : "text-slate-400"}`}
+          >
+            <Search className="h-4 w-4" />
+            <span className="text-[9px] font-semibold uppercase tracking-wide">Clients {allDisplayClients.length > 0 ? allDisplayClients.length : ""}</span>
+          </button>
+          <button
+            onClick={handleGetLocation}
+            className={`flex-1 flex flex-col items-center gap-0.5 py-1 rounded-xl transition-colors ${userLocation ? "text-indigo-500" : "text-slate-400"}`}
+          >
+            <Navigation className="h-4 w-4" />
+            <span className="text-[9px] font-semibold uppercase tracking-wide">Nearby</span>
+          </button>
         </div>
       </div>
     </>
