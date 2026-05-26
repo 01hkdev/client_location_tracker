@@ -4,6 +4,7 @@ import { useListClients, useGetNearbyClients, useGetClientStats } from "@workspa
 import {
   Search, MapPin, Navigation,
   X, Loader2, BarChart2, List, Map as MapIcon,
+  Car, Bike, ExternalLink, Clock, Route,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -172,6 +173,10 @@ export default function MapPage() {
   const [mapError, setMapError] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"map" | "list">("map");
   const [showStats, setShowStats] = useState(false);
+  const [navMode, setNavMode] = useState<"DRIVING" | "TWO_WHEELER" | null>(null);
+  const [routeInfo, setRouteInfo] = useState<{ distance: string; duration: string; mode: string } | null>(null);
+  const [navLoading, setNavLoading] = useState(false);
+  const [navError, setNavError] = useState<string | null>(null);
 
   const mapRef = useRef<HTMLDivElement>(null);
   const googleMapRef = useRef<google.maps.Map | null>(null);
@@ -180,6 +185,9 @@ export default function MapPage() {
   const userMarkerRef = useRef<google.maps.Marker | null>(null);
   const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
   const clustererRef = useRef<import("@googlemaps/markerclusterer").MarkerClusterer | null>(null);
+  const directionsServiceRef = useRef<google.maps.DirectionsService | null>(null);
+  const directionsRendererRef = useRef<google.maps.DirectionsRenderer | null>(null);
+  const userLocationRef = useRef<{ lat: number; lng: number } | null>(null);
 
   const apiFilterParams = useMemo(() => {
     if (userLocation) return {};
@@ -307,6 +315,17 @@ export default function MapPage() {
         });
         googleMapRef.current = map;
         infoWindowRef.current = new InfoWindow();
+        directionsServiceRef.current = new google.maps.DirectionsService();
+        const renderer = new google.maps.DirectionsRenderer({
+          suppressMarkers: false,
+          polylineOptions: {
+            strokeColor: "#3b82f6",
+            strokeWeight: 5,
+            strokeOpacity: 0.85,
+          },
+        });
+        renderer.setMap(map);
+        directionsRendererRef.current = renderer;
         setMapReady(true);
       } catch (err) {
         if (!cancelled) setMapError(String(err));
@@ -349,7 +368,78 @@ export default function MapPage() {
       const z = googleMapRef.current.getZoom() ?? 5;
       if (z < 12) googleMapRef.current.setZoom(12);
     }
+    if (!selectedClient) {
+      clearDirections();
+    }
   }, [selectedClient]);
+
+  useEffect(() => {
+    userLocationRef.current = userLocation;
+  }, [userLocation]);
+
+  const clearDirections = () => {
+    if (directionsRendererRef.current) {
+      directionsRendererRef.current.setMap(null);
+      if (googleMapRef.current) directionsRendererRef.current.setMap(googleMapRef.current);
+    }
+    setRouteInfo(null);
+    setNavMode(null);
+    setNavError(null);
+  };
+
+  const getDirections = async (mode: "DRIVING" | "TWO_WHEELER", client: Client) => {
+    if (!directionsServiceRef.current || !directionsRendererRef.current || !googleMapRef.current) return;
+    setNavLoading(true);
+    setNavError(null);
+    setNavMode(mode);
+    setRouteInfo(null);
+    try {
+      let origin = userLocationRef.current;
+      if (!origin) {
+        origin = await new Promise<{ lat: number; lng: number }>((resolve, reject) => {
+          if (!navigator.geolocation) { reject(new Error("Geolocation not supported")); return; }
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+              setUserLocation(loc);
+              userLocationRef.current = loc;
+              resolve(loc);
+            },
+            () => reject(new Error("Location access denied. Please allow location in browser settings."))
+          );
+        });
+      }
+      const result = await directionsServiceRef.current.route({
+        origin,
+        destination: { lat: client.latitude, lng: client.longitude },
+        travelMode: mode as google.maps.TravelMode,
+      });
+      directionsRendererRef.current.setDirections(result);
+      const leg = result.routes[0]?.legs[0];
+      setRouteInfo({
+        distance: leg?.distance?.text ?? "—",
+        duration: leg?.duration?.text ?? "—",
+        mode,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setNavError(msg.includes("ZERO_RESULTS") ? "No route found for this mode." : msg);
+      setNavMode(null);
+    }
+    setNavLoading(false);
+  };
+
+  const openInGoogleMaps = (client: Client, mode: "DRIVING" | "TWO_WHEELER") => {
+    const travelMode = mode === "TWO_WHEELER" ? "two-wheeler" : "driving";
+    const dest = `${client.latitude},${client.longitude}`;
+    const origin = userLocationRef.current
+      ? `${userLocationRef.current.lat},${userLocationRef.current.lng}`
+      : "";
+    const url = origin
+      ? `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&travelmode=${travelMode}`
+      : `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=${travelMode}`;
+    window.open(url, "_blank");
+  };
 
   const handleGetLocation = () => {
     if (!navigator.geolocation) { setLocationError("Geolocation not supported."); return; }
@@ -613,7 +703,7 @@ export default function MapPage() {
 
       {/* Selected client — desktop overlay */}
       {selectedClient && (
-        <div className="hidden md:block absolute top-4 right-16 bg-white border border-slate-200 rounded-2xl p-4 shadow-lg max-w-[260px] z-10">
+        <div className="hidden md:block absolute top-4 right-16 bg-white border border-slate-200 rounded-2xl p-4 shadow-lg w-[268px] z-10">
           <div className="flex items-start justify-between gap-2 mb-3">
             <div className="min-w-0">
               <p className="text-[13px] font-bold text-slate-900 leading-snug">{selectedClient.companyName}</p>
@@ -626,12 +716,88 @@ export default function MapPage() {
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
-          <div className="space-y-1.5 mb-3">
-            <p className="text-[11px] text-slate-600"><span className="text-slate-400">City</span> {selectedClient.city}, {selectedClient.state}</p>
-            <p className="text-[11px] text-slate-600"><span className="text-slate-400">PIN</span> {selectedClient.pinCode}</p>
-            {selectedClient.fieldPerson && <p className="text-[11px] text-slate-600"><span className="text-slate-400">Field</span> {selectedClient.fieldPerson}</p>}
+          <div className="space-y-1 mb-3">
+            <p className="text-[11px] text-slate-600"><span className="text-slate-400 mr-1">City</span>{selectedClient.city}, {selectedClient.state}</p>
+            <p className="text-[11px] text-slate-600"><span className="text-slate-400 mr-1">PIN</span>{selectedClient.pinCode}</p>
+            {selectedClient.fieldPerson && <p className="text-[11px] text-slate-600"><span className="text-slate-400 mr-1">Field</span>{selectedClient.fieldPerson}</p>}
           </div>
-          <StatusPill status={selectedClient.status} />
+          <div className="mb-3"><StatusPill status={selectedClient.status} /></div>
+
+          {/* Navigation section */}
+          <div className="border-t border-slate-100 pt-3">
+            <p className="text-[9px] text-slate-400 uppercase tracking-widest font-bold mb-2 flex items-center gap-1">
+              <Route className="h-2.5 w-2.5" /> Get Directions
+            </p>
+            <div className="flex gap-1.5 mb-2">
+              <button
+                onClick={() => getDirections("DRIVING", selectedClient)}
+                disabled={navLoading}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-semibold border transition-all ${
+                  navMode === "DRIVING"
+                    ? "bg-blue-500 border-blue-500 text-white shadow-sm shadow-blue-200"
+                    : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600"
+                } disabled:opacity-50`}
+              >
+                {navLoading && navMode === "DRIVING" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Car className="h-3 w-3" />}
+                Car
+              </button>
+              <button
+                onClick={() => getDirections("TWO_WHEELER", selectedClient)}
+                disabled={navLoading}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-[11px] font-semibold border transition-all ${
+                  navMode === "TWO_WHEELER"
+                    ? "bg-blue-500 border-blue-500 text-white shadow-sm shadow-blue-200"
+                    : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600"
+                } disabled:opacity-50`}
+              >
+                {navLoading && navMode === "TWO_WHEELER" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bike className="h-3 w-3" />}
+                Bike
+              </button>
+              {routeInfo && (
+                <button
+                  onClick={clearDirections}
+                  className="w-8 flex items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-400 hover:bg-red-50 hover:border-red-200 hover:text-red-400 transition-all"
+                  title="Clear route"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+
+            {navError && (
+              <p className="text-[10px] text-red-500 bg-red-50 border border-red-100 rounded-lg px-2.5 py-1.5 mb-2 leading-relaxed">{navError}</p>
+            )}
+
+            {routeInfo && (
+              <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5 mb-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 text-[12px] font-bold text-blue-700">
+                      <Route className="h-3 w-3" />
+                      {routeInfo.distance}
+                    </div>
+                    <div className="flex items-center gap-1 text-[11px] text-blue-500">
+                      <Clock className="h-2.5 w-2.5" />
+                      {routeInfo.duration}
+                    </div>
+                  </div>
+                  <span className="text-[9px] text-blue-400 uppercase tracking-wide font-bold">
+                    {routeInfo.mode === "DRIVING" ? "🚗" : "🏍️"}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {(routeInfo || navMode) && (
+              <button
+                onClick={() => openInGoogleMaps(selectedClient, (navMode ?? "DRIVING") as "DRIVING" | "TWO_WHEELER")}
+                className="w-full flex items-center justify-center gap-2 py-2 bg-green-500 hover:bg-green-600 text-white rounded-xl text-[11px] font-bold transition-colors shadow-sm shadow-green-200"
+              >
+                <ExternalLink className="h-3 w-3" />
+                Open in Google Maps
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -654,7 +820,7 @@ export default function MapPage() {
               </button>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-2 mt-3">
+          <div className="grid grid-cols-3 gap-2 mt-3 mb-3">
             <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
               <p className="text-[9px] text-slate-400 uppercase tracking-wide mb-1">City</p>
               <p className="text-[11px] text-slate-700 font-medium">{selectedClient.city}</p>
@@ -667,6 +833,72 @@ export default function MapPage() {
               <p className="text-[9px] text-slate-400 uppercase tracking-wide mb-1">Field</p>
               <p className="text-[11px] text-slate-700 font-medium truncate">{selectedClient.fieldPerson || "—"}</p>
             </div>
+          </div>
+
+          {/* Navigation — mobile */}
+          <div className="border-t border-slate-100 pt-3">
+            <div className="flex gap-2 mb-2">
+              <button
+                onClick={() => getDirections("DRIVING", selectedClient)}
+                disabled={navLoading}
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[12px] font-bold border transition-all ${
+                  navMode === "DRIVING"
+                    ? "bg-blue-500 border-blue-500 text-white"
+                    : "bg-slate-50 border-slate-200 text-slate-600 active:bg-blue-50"
+                } disabled:opacity-50`}
+              >
+                {navLoading && navMode === "DRIVING" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Car className="h-3.5 w-3.5" />}
+                Car
+              </button>
+              <button
+                onClick={() => getDirections("TWO_WHEELER", selectedClient)}
+                disabled={navLoading}
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[12px] font-bold border transition-all ${
+                  navMode === "TWO_WHEELER"
+                    ? "bg-blue-500 border-blue-500 text-white"
+                    : "bg-slate-50 border-slate-200 text-slate-600 active:bg-blue-50"
+                } disabled:opacity-50`}
+              >
+                {navLoading && navMode === "TWO_WHEELER" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bike className="h-3.5 w-3.5" />}
+                Bike
+              </button>
+              {routeInfo && (
+                <button
+                  onClick={clearDirections}
+                  className="w-11 flex items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-400 active:bg-red-50 active:text-red-400 transition-all"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {navError && (
+              <p className="text-[10px] text-red-500 bg-red-50 border border-red-100 rounded-lg px-2.5 py-1.5 mb-2 leading-relaxed">{navError}</p>
+            )}
+
+            {routeInfo && (
+              <div className="flex items-center justify-between bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 mb-2">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5 text-[13px] font-bold text-blue-700">
+                    <Route className="h-3.5 w-3.5" />
+                    {routeInfo.distance}
+                  </div>
+                  <div className="flex items-center gap-1 text-[12px] text-blue-500 font-medium">
+                    <Clock className="h-3 w-3" />
+                    {routeInfo.duration}
+                  </div>
+                </div>
+                <span className="text-base">{routeInfo.mode === "DRIVING" ? "🚗" : "🏍️"}</span>
+              </div>
+            )}
+
+            <button
+              onClick={() => openInGoogleMaps(selectedClient, (navMode ?? "DRIVING") as "DRIVING" | "TWO_WHEELER")}
+              className="w-full flex items-center justify-center gap-2 py-3 bg-green-500 hover:bg-green-600 active:bg-green-700 text-white rounded-xl text-[13px] font-bold transition-colors"
+            >
+              <ExternalLink className="h-4 w-4" />
+              Open in Google Maps
+            </button>
           </div>
         </div>
       )}
