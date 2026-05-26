@@ -866,7 +866,7 @@ export default function MapPage() {
           </div>
           <Link
             to="/team"
-            className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-100 hover:bg-indigo-50 text-slate-500 hover:text-indigo-600 transition-colors text-[10px] font-semibold"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white transition-colors text-[10px] font-bold shadow-sm shadow-indigo-200"
             title="Team Performance"
           >
             <Users className="h-3 w-3" />
@@ -1265,28 +1265,35 @@ export default function MapPage() {
         </div>
 
         {/* Mobile bottom nav */}
-        <div className="bg-white border-t border-slate-100 px-4 py-2 flex shrink-0">
+        <div className="bg-white border-t border-slate-100 px-2 py-2 flex shrink-0 safe-area-bottom">
           <button
             onClick={() => setMobileTab("map")}
-            className={`flex-1 flex flex-col items-center gap-0.5 py-1 rounded-xl transition-colors ${mobileTab === "map" ? "text-amber-500" : "text-slate-400"}`}
+            className={`flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-xl transition-colors ${mobileTab === "map" ? "text-amber-500" : "text-slate-400"}`}
           >
             <MapPin className="h-4 w-4" />
             <span className="text-[9px] font-semibold uppercase tracking-wide">Map</span>
           </button>
           <button
             onClick={() => setMobileTab("list")}
-            className={`flex-1 flex flex-col items-center gap-0.5 py-1 rounded-xl transition-colors ${mobileTab === "list" ? "text-amber-500" : "text-slate-400"}`}
+            className={`flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-xl transition-colors ${mobileTab === "list" ? "text-amber-500" : "text-slate-400"}`}
           >
             <Search className="h-4 w-4" />
-            <span className="text-[9px] font-semibold uppercase tracking-wide">Clients {allDisplayClients.length > 0 ? allDisplayClients.length : ""}</span>
+            <span className="text-[9px] font-semibold uppercase tracking-wide">Clients</span>
           </button>
           <button
             onClick={handleGetLocation}
-            className={`flex-1 flex flex-col items-center gap-0.5 py-1 rounded-xl transition-colors ${userLocation ? "text-indigo-500" : "text-slate-400"}`}
+            className={`flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-xl transition-colors ${userLocation ? "text-indigo-500" : "text-slate-400"}`}
           >
             <Navigation className="h-4 w-4" />
             <span className="text-[9px] font-semibold uppercase tracking-wide">Nearby</span>
           </button>
+          <Link
+            to="/team"
+            className="flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-xl transition-colors text-slate-400 hover:text-indigo-500 active:text-indigo-600"
+          >
+            <Users className="h-4 w-4" />
+            <span className="text-[9px] font-semibold uppercase tracking-wide">Team</span>
+          </Link>
         </div>
       </div>
     </>
