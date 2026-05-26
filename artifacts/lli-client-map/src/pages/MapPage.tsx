@@ -19,6 +19,7 @@ type Client = {
   latitude: number;
   longitude: number;
   fieldPerson: string;
+  computerPerson?: string;
   status: string;
   createdAt?: string;
 };
@@ -68,9 +69,18 @@ function ClientCard({ client, onClick, selected, distance }: {
             <MapPin className="h-2.5 w-2.5 text-slate-400 shrink-0" />
             <span className="text-[11px] text-slate-500 truncate">{client.city}, {client.state}</span>
           </div>
-          {client.fieldPerson && (
-            <p className="text-[10px] text-slate-400 mt-0.5 truncate">{client.fieldPerson}</p>
-          )}
+          <div className="flex gap-2 mt-1 flex-wrap">
+            {client.fieldPerson && (
+              <p className="text-[10px] text-slate-400 truncate">
+                <span className="text-slate-300 font-medium">Field:</span> {client.fieldPerson}
+              </p>
+            )}
+            {client.computerPerson && (
+              <p className="text-[10px] text-slate-400 truncate">
+                <span className="text-slate-300 font-medium">PC:</span> {client.computerPerson}
+              </p>
+            )}
+          </div>
         </div>
         <div className="flex flex-col items-end gap-1.5 shrink-0 pt-0.5">
           <StatusPill status={client.status} />
@@ -755,7 +765,12 @@ export default function MapPage() {
           <div className="space-y-1 mb-3">
             <p className="text-[11px] text-slate-600"><span className="text-slate-400 mr-1">City</span>{selectedClient.city}, {selectedClient.state}</p>
             <p className="text-[11px] text-slate-600"><span className="text-slate-400 mr-1">PIN</span>{selectedClient.pinCode}</p>
-            {selectedClient.fieldPerson && <p className="text-[11px] text-slate-600"><span className="text-slate-400 mr-1">Field</span>{selectedClient.fieldPerson}</p>}
+            {selectedClient.fieldPerson && (
+              <p className="text-[11px] text-slate-600"><span className="text-slate-400 mr-1">Field Person</span>{selectedClient.fieldPerson}</p>
+            )}
+            {selectedClient.computerPerson && (
+              <p className="text-[11px] text-slate-600"><span className="text-slate-400 mr-1">Computer Person</span>{selectedClient.computerPerson}</p>
+            )}
           </div>
           <div className="mb-3"><StatusPill status={selectedClient.status} /></div>
 
@@ -862,12 +877,22 @@ export default function MapPage() {
               <p className="text-[11px] text-slate-700 font-medium">{selectedClient.city}</p>
             </div>
             <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
+              <p className="text-[9px] text-slate-400 uppercase tracking-wide mb-1">State</p>
+              <p className="text-[11px] text-slate-700 font-medium">{selectedClient.state}</p>
+            </div>
+            <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
               <p className="text-[9px] text-slate-400 uppercase tracking-wide mb-1">PIN</p>
               <p className="text-[11px] text-slate-700 font-medium font-mono">{selectedClient.pinCode}</p>
             </div>
-            <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
-              <p className="text-[9px] text-slate-400 uppercase tracking-wide mb-1">Field</p>
-              <p className="text-[11px] text-slate-700 font-medium truncate">{selectedClient.fieldPerson || "—"}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 mb-3">
+            <div className="bg-blue-50 rounded-xl p-2.5 border border-blue-100">
+              <p className="text-[9px] text-blue-400 uppercase tracking-wide mb-1">Field Person</p>
+              <p className="text-[11px] text-blue-700 font-semibold truncate">{selectedClient.fieldPerson || "—"}</p>
+            </div>
+            <div className="bg-violet-50 rounded-xl p-2.5 border border-violet-100">
+              <p className="text-[9px] text-violet-400 uppercase tracking-wide mb-1">Computer Person</p>
+              <p className="text-[11px] text-violet-700 font-semibold truncate">{selectedClient.computerPerson || "—"}</p>
             </div>
           </div>
 

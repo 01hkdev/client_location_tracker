@@ -19,6 +19,7 @@ export interface Client {
   latitude: number;
   longitude: number;
   fieldPerson: string;
+  computerPerson?: string;
   status: string;
   createdAt?: string;
 }
@@ -33,6 +34,7 @@ export interface ClientWithDistance {
   latitude: number;
   longitude: number;
   fieldPerson: string;
+  computerPerson?: string;
   status: string;
   createdAt?: string;
   distanceKm: number;

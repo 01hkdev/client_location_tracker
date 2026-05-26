@@ -38,6 +38,7 @@ export const ListClientsResponseItem = zod.object({
   latitude: zod.number(),
   longitude: zod.number(),
   fieldPerson: zod.string(),
+  computerPerson: zod.string().optional(),
   status: zod.string(),
   createdAt: zod.string().optional(),
 });
@@ -66,6 +67,7 @@ export const GetNearbyClientsResponseItem = zod.object({
   latitude: zod.number(),
   longitude: zod.number(),
   fieldPerson: zod.string(),
+  computerPerson: zod.string().optional(),
   status: zod.string(),
   createdAt: zod.string().optional(),
   distanceKm: zod.number(),

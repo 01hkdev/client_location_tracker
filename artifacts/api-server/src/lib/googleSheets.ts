@@ -13,6 +13,7 @@ export type SheetClient = {
   latitude: number;
   longitude: number;
   fieldPerson: string;
+  computerPerson: string;
   status: string;
   address: string;
   createdAt: string;
@@ -71,6 +72,7 @@ export async function getClientsFromSheet(): Promise<SheetClient[]> {
   const codeIdx     = colIdx(["company code"]);
   const nameIdx     = colIdx(["company name"]);
   const fieldIdx    = colIdx(["field person responsible", "field person"]);
+  const computerIdx = colIdx(["computer person responsible", "computer person"]);
   const addressIdx  = colIdx(["company address"]);
   const cityIdx     = colIdx(["city"]);
   const stateIdx    = colIdx(["state"]);
@@ -94,9 +96,9 @@ export async function getClientsFromSheet(): Promise<SheetClient[]> {
     if (geoIdx >= 0 && geoStatus && !geoStatus.toLowerCase().includes("done") && !geoStatus.toLowerCase().includes("pin")) continue;
 
     const rawStatus = statusIdx >= 0 ? (row[statusIdx] ?? "").toLowerCase() : "active";
-    let status = "active";
-    if (rawStatus.includes("inactive") || rawStatus.includes("close") || rawStatus.includes("hold")) status = "inactive";
-    else if (rawStatus.includes("prospect") || rawStatus.includes("lead") || rawStatus.includes("nil")) status = "prospect";
+    // Only include ACTIVE clients — skip CLOSED, INACTIVE, PROSPECT, OFFICE, HOLD, etc.
+    if (rawStatus && !rawStatus.includes("active")) continue;
+    const status = "active";
 
     const sn = snIdx >= 0 ? row[snIdx] ?? "" : "";
     const code = codeIdx >= 0 ? row[codeIdx] ?? "" : "";
@@ -106,6 +108,7 @@ export async function getClientsFromSheet(): Promise<SheetClient[]> {
     const pinCode = pinIdx >= 0 ? row[pinIdx] ?? "" : "";
     const address = addressIdx >= 0 ? row[addressIdx] ?? "" : "";
     const fieldPerson = fieldIdx >= 0 ? row[fieldIdx] ?? "" : "";
+    const computerPerson = computerIdx >= 0 ? row[computerIdx] ?? "" : "";
     const createdAtRaw = dateIdx >= 0 ? row[dateIdx] ?? "" : "";
 
     const finalCode = code || (sn ? `SN${sn.padStart(3, "0")}` : `CLT${String(id).padStart(3, "0")}`);
@@ -127,6 +130,7 @@ export async function getClientsFromSheet(): Promise<SheetClient[]> {
       latitude: lat,
       longitude: lng,
       fieldPerson,
+      computerPerson,
       status,
       address,
       createdAt,

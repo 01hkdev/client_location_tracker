@@ -41,6 +41,7 @@ function sheetClientToApi(c: SheetClient) {
     latitude: c.latitude,
     longitude: c.longitude,
     fieldPerson: c.fieldPerson,
+    computerPerson: c.computerPerson,
     status: c.status,
     createdAt: c.createdAt,
   };
