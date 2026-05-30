@@ -7,7 +7,7 @@ import {
   Search, MapPin, Navigation,
   X, Loader2, BarChart2,
   Car, Bike, ExternalLink, Clock, Route, User, Monitor, Building2,
-  Users, Hash, FileText, RefreshCw,
+  Users, Hash, FileText, RefreshCw, Flag, AlertTriangle,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -75,11 +75,21 @@ const STATUS_COLORS: Record<string, string> = {
   inactive: "#94a3b8",
 };
 
+function clientHaversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 function makeMarkerIcon(
   isSelected: boolean,
   _isNearby: boolean,
   status: string,
-  name: string
+  name: string,
+  suspicious?: boolean,
+  flagged?: boolean,
 ): google.maps.Icon {
   const pinW = isSelected ? 38 : 28;
   const pinR = pinW / 2;
@@ -106,7 +116,7 @@ function makeMarkerIcon(
   const cy = topPad + pinR; // center of circle part
   const tipY = topPad + pinW + tailH; // pointed tip y
 
-  const fillColor = isSelected ? "#f59e0b" : (STATUS_COLORS[status.toLowerCase()] ?? "#6366f1");
+  const fillColor = flagged ? "#ef4444" : suspicious ? "#f97316" : isSelected ? "#f59e0b" : (STATUS_COLORS[status.toLowerCase()] ?? "#6366f1");
 
   // Glow ring for selected
   if (isSelected) {
@@ -204,21 +214,26 @@ function GeoStatusBadge({ geoStatus }: { geoStatus?: string }) {
   return null;
 }
 
-function ClientCard({ client, onClick, selected, distance }: {
-  client: Client; onClick: () => void; selected: boolean; distance?: number;
+function ClientCard({ client, onClick, selected, distance, suspicious, flagged }: {
+  client: Client; onClick: () => void; selected: boolean; distance?: number; suspicious?: boolean; flagged?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
       className={`w-full text-left px-3 py-3 rounded-xl border transition-all duration-150 mb-1.5 ${
-        selected
-          ? "border-amber-400 bg-amber-50 shadow-sm"
-          : "border-slate-100 hover:border-slate-200 hover:bg-slate-50 bg-white"
+        flagged ? "border-red-300 bg-red-50 shadow-sm"
+        : suspicious ? "border-orange-300 bg-orange-50 shadow-sm"
+        : selected ? "border-amber-400 bg-amber-50 shadow-sm"
+        : "border-slate-100 hover:border-slate-200 hover:bg-slate-50 bg-white"
       }`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-semibold text-slate-800 truncate leading-snug">{client.companyName}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-[13px] font-semibold text-slate-800 truncate leading-snug">{client.companyName}</p>
+            {flagged && <Flag className="h-3 w-3 text-red-500 shrink-0" />}
+            {!flagged && suspicious && <AlertTriangle className="h-3 w-3 text-orange-500 shrink-0" />}
+          </div>
           <p className="text-[10px] text-slate-400 mt-0.5 font-mono tracking-wide">{client.companyCode}</p>
           <div className="flex items-center gap-1 mt-1.5">
             <MapPin className="h-2.5 w-2.5 text-slate-400 shrink-0" />
@@ -272,6 +287,13 @@ export default function MapPage() {
   const [navError, setNavError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [locationFilter, setLocationFilter] = useState<"all" | "suspicious" | "flagged">("all");
+  const [flaggedIds, setFlaggedIds] = useState<Set<number>>(() => {
+    try {
+      const s = localStorage.getItem("lli_flagged_clients");
+      return new Set<number>(s ? JSON.parse(s) : []);
+    } catch { return new Set<number>(); }
+  });
 
   const queryClient = useQueryClient();
 
@@ -314,16 +336,66 @@ export default function MapPage() {
       : (Array.isArray(rawClients) ? rawClients : []);
   }, [userLocation, nearbyClients, rawClients, localFilterClients]);
 
-  const listClients: (Client | ClientWithDistance)[] = useMemo(() => {
-    if (geoStatusFilter === "all") return allDisplayClients;
-    return allDisplayClients.filter((c) => {
-      const gs = ((c as Client).geoStatus ?? "").toLowerCase();
-      if (geoStatusFilter === "done") return gs.includes("done");
-      if (geoStatusFilter === "failed") return gs.includes("failed");
-      if (geoStatusFilter === "pending") return gs.includes("pending");
-      return true;
+  const pinCentroids = useMemo(() => {
+    if (!allClientsData) return new Map<string, { lat: number; lng: number }>();
+    const clients = allClientsData as Client[];
+    const groups = new Map<string, { lat: number; lng: number }[]>();
+    for (const c of clients) {
+      if (c.pinCode && c.latitude !== 0 && c.longitude !== 0 && !isNaN(c.latitude) && !isNaN(c.longitude)) {
+        if (!groups.has(c.pinCode)) groups.set(c.pinCode, []);
+        groups.get(c.pinCode)!.push({ lat: c.latitude, lng: c.longitude });
+      }
+    }
+    const centroids = new Map<string, { lat: number; lng: number }>();
+    for (const [pin, coords] of groups) {
+      if (coords.length < 2) continue;
+      centroids.set(pin, {
+        lat: coords.reduce((s, c) => s + c.lat, 0) / coords.length,
+        lng: coords.reduce((s, c) => s + c.lng, 0) / coords.length,
+      });
+    }
+    return centroids;
+  }, [allClientsData]);
+
+  const suspiciousIds = useMemo(() => {
+    if (!allClientsData) return new Set<number>();
+    const clients = allClientsData as Client[];
+    const result = new Set<number>();
+    for (const c of clients) {
+      if (!c.pinCode || c.latitude === 0 || c.longitude === 0) continue;
+      const centroid = pinCentroids.get(c.pinCode);
+      if (!centroid) continue;
+      if (clientHaversineKm(c.latitude, c.longitude, centroid.lat, centroid.lng) > 10) {
+        result.add(c.id);
+      }
+    }
+    return result;
+  }, [allClientsData, pinCentroids]);
+
+  const toggleFlag = (id: number) => {
+    setFlaggedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      localStorage.setItem("lli_flagged_clients", JSON.stringify([...next]));
+      return next;
     });
-  }, [allDisplayClients, geoStatusFilter]);
+  };
+
+  const listClients: (Client | ClientWithDistance)[] = useMemo(() => {
+    let clients = allDisplayClients;
+    if (geoStatusFilter !== "all") {
+      clients = clients.filter((c) => {
+        const gs = ((c as Client).geoStatus ?? "").toLowerCase();
+        if (geoStatusFilter === "done") return gs.includes("done");
+        if (geoStatusFilter === "failed") return gs.includes("failed");
+        if (geoStatusFilter === "pending") return gs.includes("pending");
+        return true;
+      });
+    }
+    if (locationFilter === "suspicious") return clients.filter(c => suspiciousIds.has(c.id));
+    if (locationFilter === "flagged") return clients.filter(c => flaggedIds.has(c.id));
+    return clients;
+  }, [allDisplayClients, geoStatusFilter, locationFilter, suspiciousIds, flaggedIds]);
 
   const mappableClients: (Client | ClientWithDistance)[] = useMemo(() => {
     return allDisplayClients.filter((c) => {
@@ -478,7 +550,9 @@ export default function MapPage() {
     const newMarkers = list.map((client) => {
       const isNearby = hasUserLoc && "distanceKm" in client;
       const isSelected = selected?.id === client.id;
-      const icon = makeMarkerIcon(isSelected, isNearby, client.status, client.companyName);
+      const isSuspicious = suspiciousIds.has(client.id);
+      const isFlagged = flaggedIds.has(client.id);
+      const icon = makeMarkerIcon(isSelected, isNearby, client.status, client.companyName, isSuspicious, isFlagged);
       const marker = new google.maps.Marker({
         position: { lat: client.latitude, lng: client.longitude },
         title: client.companyName,
@@ -1118,6 +1192,22 @@ export default function MapPage() {
             </button>
           ))}
         </div>
+        {/* Location integrity filter */}
+        <div className="flex gap-1 flex-wrap">
+          {([
+            { val: "all", label: "All Locations", cls: "bg-slate-800 text-white", inactive: "bg-slate-50 text-slate-400 border border-slate-200 hover:bg-slate-100" },
+            { val: "suspicious", label: `⚠️ Suspicious (${suspiciousIds.size})`, cls: "bg-orange-100 text-orange-700 border border-orange-300", inactive: "bg-slate-50 text-slate-400 border border-slate-200 hover:bg-orange-50 hover:text-orange-500" },
+            { val: "flagged", label: `🚩 Flagged (${flaggedIds.size})`, cls: "bg-red-100 text-red-700 border border-red-300", inactive: "bg-slate-50 text-slate-400 border border-slate-200 hover:bg-red-50 hover:text-red-500" },
+          ] as const).map(({ val, label, cls, inactive }) => (
+            <button
+              key={val}
+              onClick={() => setLocationFilter(val)}
+              className={`px-2 py-1 rounded-lg text-[9px] font-bold tracking-wide transition-colors ${locationFilter === val ? cls : inactive}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Stats (collapsible) */}
@@ -1155,6 +1245,8 @@ export default function MapPage() {
                 client={client}
                 selected={selectedClient?.id === client.id}
                 distance={"distanceKm" in client ? (client as ClientWithDistance).distanceKm : undefined}
+                suspicious={suspiciousIds.has(client.id)}
+                flagged={flaggedIds.has(client.id)}
                 onClick={() => { setSelectedClient(client); setMobileTab("map"); }}
               />
             ))
@@ -1215,17 +1307,43 @@ export default function MapPage() {
             >
               <X className="h-3.5 w-3.5" />
             </button>
-            <p className="text-[13px] font-bold text-white leading-snug pr-6">{selectedClient.companyName}</p>
+            <p className="text-[13px] font-bold text-white leading-snug pr-14">{selectedClient.companyName}</p>
             <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
               <span className="px-1.5 py-0.5 bg-white/15 text-white/80 rounded text-[9px] font-mono font-bold">{selectedClient.companyCode}</span>
               {selectedClient.pinCode && (
                 <span className="px-1.5 py-0.5 bg-rose-400/25 text-rose-200 rounded text-[9px] font-mono font-bold"># {selectedClient.pinCode}</span>
               )}
+              {suspiciousIds.has(selectedClient.id) && !flaggedIds.has(selectedClient.id) && (
+                <span className="px-1.5 py-0.5 bg-orange-400/30 text-orange-200 rounded text-[9px] font-bold flex items-center gap-0.5"><AlertTriangle className="h-2.5 w-2.5" />Location suspect</span>
+              )}
+              {flaggedIds.has(selectedClient.id) && (
+                <span className="px-1.5 py-0.5 bg-red-400/30 text-red-200 rounded text-[9px] font-bold flex items-center gap-0.5"><Flag className="h-2.5 w-2.5" />Flagged</span>
+              )}
             </div>
+            <button
+              onClick={() => toggleFlag(selectedClient.id)}
+              className={`absolute top-9 right-3 p-1 rounded-lg transition-colors ${flaggedIds.has(selectedClient.id) ? "text-red-300 hover:text-red-100 bg-red-400/20" : "text-slate-400 hover:text-orange-300 hover:bg-white/10"}`}
+              title={flaggedIds.has(selectedClient.id) ? "Remove flag" : "Flag wrong location"}
+            >
+              <Flag className="h-3.5 w-3.5" />
+            </button>
           </div>
 
           {/* Info cards */}
           <div className="p-3 space-y-2">
+            {(suspiciousIds.has(selectedClient.id) || flaggedIds.has(selectedClient.id)) && (
+              <div className={`rounded-xl p-2.5 border flex items-start gap-2 ${flaggedIds.has(selectedClient.id) ? "bg-red-50 border-red-200" : "bg-orange-50 border-orange-200"}`}>
+                <AlertTriangle className={`h-3.5 w-3.5 mt-0.5 shrink-0 ${flaggedIds.has(selectedClient.id) ? "text-red-500" : "text-orange-500"}`} />
+                <div>
+                  <p className={`text-[10px] font-bold mb-0.5 ${flaggedIds.has(selectedClient.id) ? "text-red-700" : "text-orange-700"}`}>
+                    {flaggedIds.has(selectedClient.id) ? "Flagged for review" : "Possible wrong location"}
+                  </p>
+                  <p className={`text-[9px] leading-snug ${flaggedIds.has(selectedClient.id) ? "text-red-600" : "text-orange-600"}`}>
+                    Map pin may not match this company's actual address. Fix the Latitude/Longitude in the sheet, then hit Refresh.
+                  </p>
+                </div>
+              </div>
+            )}
             {selectedClient.locality && (
               <div className="bg-teal-50 rounded-xl p-2.5 border border-teal-100">
                 <p className="text-[8px] text-teal-500 uppercase tracking-wider mb-0.5 flex items-center gap-1"><MapPin className="h-2 w-2" />Locality</p>
@@ -1336,7 +1454,11 @@ export default function MapPage() {
           {/* Header */}
           <div className="flex items-start justify-between gap-3 px-4 pb-2 pt-1">
             <div className="min-w-0 flex-1">
-              <p className="text-[15px] font-bold text-slate-900 leading-tight">{selectedClient.companyName}</p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-[15px] font-bold text-slate-900 leading-tight truncate">{selectedClient.companyName}</p>
+                {flaggedIds.has(selectedClient.id) && <Flag className="h-4 w-4 text-red-500 shrink-0" />}
+                {!flaggedIds.has(selectedClient.id) && suspiciousIds.has(selectedClient.id) && <AlertTriangle className="h-4 w-4 text-orange-500 shrink-0" />}
+              </div>
               <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                 <span className="px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] font-mono font-bold">{selectedClient.companyCode}</span>
                 {selectedClient.pinCode && (
@@ -1344,13 +1466,31 @@ export default function MapPage() {
                 )}
               </div>
             </div>
-            <button
-              onClick={() => setSelectedClient(null)}
-              className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 text-slate-500 active:bg-slate-200"
-            >
-              <X className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => toggleFlag(selectedClient.id)}
+                className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${flaggedIds.has(selectedClient.id) ? "bg-red-100 text-red-500 active:bg-red-200" : "bg-slate-100 text-slate-400 active:bg-orange-100 active:text-orange-500"}`}
+                title={flaggedIds.has(selectedClient.id) ? "Remove flag" : "Flag wrong location"}
+              >
+                <Flag className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => setSelectedClient(null)}
+                className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-100 text-slate-500 active:bg-slate-200"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </div>
+          {(suspiciousIds.has(selectedClient.id) || flaggedIds.has(selectedClient.id)) && (
+            <div className={`mx-4 mb-2 px-3 py-2 rounded-xl flex items-start gap-2 ${flaggedIds.has(selectedClient.id) ? "bg-red-50 border border-red-200" : "bg-orange-50 border border-orange-200"}`}>
+              <AlertTriangle className={`h-3.5 w-3.5 mt-0.5 shrink-0 ${flaggedIds.has(selectedClient.id) ? "text-red-500" : "text-orange-500"}`} />
+              <p className={`text-[10px] leading-snug ${flaggedIds.has(selectedClient.id) ? "text-red-700" : "text-orange-700"}`}>
+                {flaggedIds.has(selectedClient.id) ? "Flagged for review — " : "Possible wrong location — "}
+                Fix Lat/Lng in the sheet, then Refresh.
+              </p>
+            </div>
+          )}
 
           {/* Scrollable info pills */}
           <div className="flex gap-2 px-4 pb-3 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
@@ -1510,6 +1650,8 @@ export default function MapPage() {
                     client={client}
                     selected={selectedClient?.id === client.id}
                     distance={"distanceKm" in client ? (client as ClientWithDistance).distanceKm : undefined}
+                    suspicious={suspiciousIds.has(client.id)}
+                    flagged={flaggedIds.has(client.id)}
                     onClick={() => { setSelectedClient(client); setMobileTab("map"); }}
                   />
                 ))
