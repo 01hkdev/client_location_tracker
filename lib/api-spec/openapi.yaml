@@ -52,6 +52,12 @@ paths:
           schema:
             type: string
           description: Filter by client status
+        - name: locality
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by locality (case-insensitive partial match)
       responses:
         "200":
           description: List of clients
@@ -178,6 +184,14 @@ components:
           type: string
         createdAt:
           type: string
+        locality:
+          type: string
+        address:
+          type: string
+        fullAddress:
+          type: string
+        geoStatus:
+          type: string
 
     ClientWithDistance:
       type: object
@@ -216,6 +230,14 @@ components:
           type: string
         createdAt:
           type: string
+        locality:
+          type: string
+        address:
+          type: string
+        fullAddress:
+          type: string
+        geoStatus:
+          type: string
         distanceKm:
           type: number
 
@@ -252,6 +274,17 @@ components:
         count:
           type: integer
 
+    LocalityCount:
+      type: object
+      required:
+        - locality
+        - count
+      properties:
+        locality:
+          type: string
+        count:
+          type: integer
+
     ClientStats:
       type: object
       required:
@@ -259,6 +292,7 @@ components:
         - byCity
         - byStatus
         - byState
+        - byLocality
       properties:
         total:
           type: integer
@@ -274,3 +308,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/StateCount"
+        byLocality:
+          type: array
+          items:
+            $ref: "#/components/schemas/LocalityCount"

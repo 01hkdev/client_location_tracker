@@ -7,6 +7,7 @@ export type SheetClient = {
   id: number;
   companyCode: string;
   companyName: string;
+  locality: string;
   city: string;
   state: string;
   pinCode: string;
@@ -75,6 +76,7 @@ export async function getClientsFromSheet(): Promise<SheetClient[]> {
   const fieldIdx       = colIdx(["field person responsible", "field person"]);
   const computerIdx    = colIdx(["computer person responsible", "computer person"]);
   const addressIdx     = colIdx(["company address"]);
+  const localityIdx    = colIdx(["locality"]);
   const cityIdx        = colIdx(["area/city", "area", "city"]);
   const stateIdx       = colIdx(["state"]);
   const pinIdx         = colIdx(["pin code", "pincode"]);
@@ -100,6 +102,7 @@ export async function getClientsFromSheet(): Promise<SheetClient[]> {
     const sn = snIdx >= 0 ? row[snIdx] ?? "" : "";
     const code = codeIdx >= 0 ? row[codeIdx] ?? "" : "";
     const name = (nameIdx >= 0 ? row[nameIdx] ?? "" : "").replace(/\r/g, "").trim();
+    const locality = localityIdx >= 0 ? (row[localityIdx] ?? "").trim() : "";
     const city = cityIdx >= 0 ? row[cityIdx] ?? "" : "";
     const state = stateIdx >= 0 ? row[stateIdx] ?? "" : "";
     const pinCode = pinIdx >= 0 ? row[pinIdx] ?? "" : "";
@@ -125,6 +128,7 @@ export async function getClientsFromSheet(): Promise<SheetClient[]> {
       id: id++,
       companyCode: finalCode,
       companyName: finalName,
+      locality,
       city,
       state,
       pinCode,

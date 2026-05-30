@@ -6,10 +6,14 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { CityCount } from "./cityCount";
+import type { LocalityCount } from "./localityCount";
+import type { StateCount } from "./stateCount";
 import type { StatusCount } from "./statusCount";
 
 export interface ClientStats {
   total: number;
   byCity: CityCount[];
   byStatus: StatusCount[];
+  byState: StateCount[];
+  byLocality: LocalityCount[];
 }

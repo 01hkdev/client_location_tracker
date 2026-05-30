@@ -19,9 +19,12 @@ export interface Client {
   latitude: number;
   longitude: number;
   fieldPerson: string;
-  computerPerson?: string;
   status: string;
   createdAt?: string;
+  locality?: string;
+  address?: string;
+  fullAddress?: string;
+  geoStatus?: string;
 }
 
 export interface ClientWithDistance {
@@ -34,9 +37,12 @@ export interface ClientWithDistance {
   latitude: number;
   longitude: number;
   fieldPerson: string;
-  computerPerson?: string;
   status: string;
   createdAt?: string;
+  locality?: string;
+  address?: string;
+  fullAddress?: string;
+  geoStatus?: string;
   distanceKm: number;
 }
 
@@ -55,11 +61,17 @@ export interface StateCount {
   count: number;
 }
 
+export interface LocalityCount {
+  locality: string;
+  count: number;
+}
+
 export interface ClientStats {
   total: number;
   byCity: CityCount[];
   byStatus: StatusCount[];
   byState: StateCount[];
+  byLocality: LocalityCount[];
 }
 
 export type ListClientsParams = {
@@ -75,6 +87,10 @@ export type ListClientsParams = {
    * Filter by client status
    */
   status?: string;
+  /**
+   * Filter by locality (case-insensitive partial match)
+   */
+  locality?: string;
 };
 
 export type GetNearbyClientsParams = {

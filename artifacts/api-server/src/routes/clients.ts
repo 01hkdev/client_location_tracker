@@ -9,7 +9,7 @@ import {
   ListClientsResponseItem,
   GetClientResponse,
 } from "@workspace/api-zod";
-import { ilike, eq, sql } from "drizzle-orm";
+import { ilike, eq, sql, and } from "drizzle-orm";
 import { getClientsFromSheet, type SheetClient } from "../lib/googleSheets.js";
 
 const router: IRouter = Router();
@@ -35,6 +35,7 @@ function sheetClientToApi(c: SheetClient) {
     id: c.id,
     companyCode: c.companyCode,
     companyName: c.companyName,
+    locality: c.locality,
     city: c.city,
     state: c.state,
     pinCode: c.pinCode,
@@ -56,12 +57,13 @@ router.get("/clients", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const { city, pinCode, status } = parsed.data;
+  const { city, pinCode, status, locality } = parsed.data;
 
   if (USE_SHEET) {
     try {
       let clients = await getClientsFromSheet();
-      if (city) clients = clients.filter((c) => c.city.toLowerCase().includes(city.toLowerCase()));
+      if (locality) clients = clients.filter((c) => c.locality.toLowerCase().includes(locality.toLowerCase()));
+      else if (city) clients = clients.filter((c) => c.city.toLowerCase().includes(city.toLowerCase()));
       else if (pinCode) clients = clients.filter((c) => c.pinCode === pinCode);
       else if (status) clients = clients.filter((c) => c.status === status);
       res.json(clients.map((c) => ListClientsResponseItem.parse(sheetClientToApi(c))));
@@ -72,7 +74,8 @@ router.get("/clients", async (req, res): Promise<void> => {
   }
 
   let query = db.select().from(clientsTable).$dynamic();
-  if (city) query = query.where(ilike(clientsTable.city, `%${city}%`));
+  if (locality) query = query.where(ilike(clientsTable.locality, `%${locality}%`));
+  else if (city) query = query.where(ilike(clientsTable.city, `%${city}%`));
   else if (pinCode) query = query.where(eq(clientsTable.pinCode, pinCode));
   else if (status) query = query.where(eq(clientsTable.status, status));
 
@@ -87,10 +90,13 @@ router.get("/clients/stats", async (req, res): Promise<void> => {
       const cityMap: Record<string, number> = {};
       const statusMap: Record<string, number> = {};
       const stateMap: Record<string, number> = {};
+      const localityMap: Record<string, number> = {};
       for (const c of clients) {
         cityMap[c.city] = (cityMap[c.city] ?? 0) + 1;
         statusMap[c.status] = (statusMap[c.status] ?? 0) + 1;
         stateMap[c.state] = (stateMap[c.state] ?? 0) + 1;
+        const localityKey = c.locality || "Locality Not Updated";
+        localityMap[localityKey] = (localityMap[localityKey] ?? 0) + 1;
       }
       const byCity = Object.entries(cityMap)
         .sort((a, b) => b[1] - a[1])
@@ -99,25 +105,30 @@ router.get("/clients/stats", async (req, res): Promise<void> => {
       const byState = Object.entries(stateMap)
         .sort((a, b) => b[1] - a[1])
         .map(([state, count]) => ({ state, count }));
+      const byLocality = Object.entries(localityMap)
+        .sort((a, b) => b[1] - a[1])
+        .map(([locality, count]) => ({ locality, count }));
 
-      res.json(GetClientStatsResponse.parse({ total: clients.length, byCity, byStatus, byState }));
+      res.json(GetClientStatsResponse.parse({ total: clients.length, byCity, byStatus, byState, byLocality }));
       return;
     } catch (err) {
       req.log.error({ err }, "Google Sheets stats failed, falling back to DB");
     }
   }
 
-  const [total, byCity, byStatus, byState] = await Promise.all([
+  const [total, byCity, byStatus, byState, byLocality] = await Promise.all([
     db.select({ count: sql<number>`count(*)::int` }).from(clientsTable),
     db.select({ city: clientsTable.city, count: sql<number>`count(*)::int` }).from(clientsTable).groupBy(clientsTable.city).orderBy(sql`count(*) desc`),
     db.select({ status: clientsTable.status, count: sql<number>`count(*)::int` }).from(clientsTable).groupBy(clientsTable.status),
     db.select({ state: clientsTable.state, count: sql<number>`count(*)::int` }).from(clientsTable).groupBy(clientsTable.state).orderBy(sql`count(*) desc`),
+    db.select({ locality: clientsTable.locality, count: sql<number>`count(*)::int` }).from(clientsTable).groupBy(clientsTable.locality).orderBy(sql`count(*) desc`),
   ]);
   res.json(GetClientStatsResponse.parse({
     total: total[0]?.count ?? 0,
     byCity: byCity.map((r) => ({ city: r.city, count: r.count })),
     byStatus: byStatus.map((r) => ({ status: r.status, count: r.count })),
     byState: byState.map((r) => ({ state: r.state, count: r.count })),
+    byLocality: byLocality.map((r) => ({ locality: r.locality || "Locality Not Updated", count: r.count })),
   }));
 });
 

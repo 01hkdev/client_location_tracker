@@ -6,6 +6,7 @@ export const clientsTable = pgTable("clients", {
   id: serial("id").primaryKey(),
   companyCode: text("company_code").notNull(),
   companyName: text("company_name").notNull(),
+  locality: text("locality").notNull().default(""),
   city: text("city").notNull(),
   state: text("state").notNull(),
   pinCode: text("pin_code").notNull(),

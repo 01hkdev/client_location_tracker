@@ -13,4 +13,6 @@ export * from "./clientWithDistance";
 export * from "./getNearbyClientsParams";
 export * from "./healthStatus";
 export * from "./listClientsParams";
+export * from "./localityCount";
+export * from "./stateCount";
 export * from "./statusCount";

@@ -19,4 +19,8 @@ export type ListClientsParams = {
    * Filter by client status
    */
   status?: string;
+  /**
+   * Filter by locality (case-insensitive partial match)
+   */
+  locality?: string;
 };

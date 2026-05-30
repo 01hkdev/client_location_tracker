@@ -15,6 +15,7 @@ type Client = {
   id: number;
   companyCode: string;
   companyName: string;
+  locality?: string;
   city: string;
   state: string;
   pinCode: string;
@@ -36,7 +37,8 @@ type Suggestion =
   | { type: "state"; label: string }
   | { type: "field"; label: string }
   | { type: "computer"; label: string }
-  | { type: "pin"; label: string };
+  | { type: "pin"; label: string }
+  | { type: "locality"; label: string };
 
 setOptions({
   key: import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string,
@@ -219,7 +221,9 @@ function ClientCard({ client, onClick, selected, distance }: {
           <p className="text-[10px] text-slate-400 mt-0.5 font-mono tracking-wide">{client.companyCode}</p>
           <div className="flex items-center gap-1 mt-1.5">
             <MapPin className="h-2.5 w-2.5 text-slate-400 shrink-0" />
-            <span className="text-[11px] text-slate-500 truncate">{client.city}{client.state ? `, ${client.state}` : ""}</span>
+            <span className="text-[11px] text-slate-500 truncate">
+              {client.locality ? `${client.locality} · ` : ""}{client.city}{client.state ? `, ${client.state}` : ""}
+            </span>
           </div>
           {client.fullAddress && (
             <p className="text-[10px] text-slate-400 truncate mt-0.5 pl-0.5">{client.fullAddress}</p>
@@ -260,6 +264,7 @@ export default function MapPage() {
   const [mobileTab, setMobileTab] = useState<"map" | "list">("map");
   const [showStats, setShowStats] = useState(false);
   const [geoStatusFilter, setGeoStatusFilter] = useState<"all" | "done" | "failed" | "pending">("all");
+  const [localityFilter, setLocalityFilter] = useState<string>("");
   const [navMode, setNavMode] = useState<"DRIVING" | "TWO_WHEELER" | null>(null);
   const [routeInfo, setRouteInfo] = useState<{ distance: string; duration: string; mode: string } | null>(null);
   const [navLoading, setNavLoading] = useState(false);
@@ -279,11 +284,12 @@ export default function MapPage() {
 
   const apiFilterParams = useMemo(() => {
     if (userLocation) return {};
+    if (localityFilter) return { locality: localityFilter };
     if (!committedSearch) return {};
     return /^\d{6}$/.test(committedSearch.trim())
       ? { pinCode: committedSearch.trim() }
       : { city: committedSearch.trim() };
-  }, [committedSearch, userLocation]);
+  }, [committedSearch, userLocation, localityFilter]);
 
   const { data: rawClients, isLoading: clientsLoading } = useListClients(apiFilterParams);
   const { data: allClientsData } = useListClients(
@@ -336,6 +342,7 @@ export default function MapPage() {
     const fieldSet = new Set<string>();
     const computerSet = new Set<string>();
     const pinSet = new Set<string>();
+    const localitySet = new Set<string>();
 
     for (const c of clients) {
       if (!isPinSearch && c.companyName.toLowerCase().includes(q) && clientMatches.length < 5)
@@ -345,9 +352,15 @@ export default function MapPage() {
       if (!isPinSearch && c.fieldPerson && c.fieldPerson.toLowerCase().includes(q)) fieldSet.add(c.fieldPerson);
       if (!isPinSearch && c.computerPerson && c.computerPerson.toLowerCase().includes(q)) computerSet.add(c.computerPerson);
       if (c.pinCode && c.pinCode.includes(q)) pinSet.add(c.pinCode);
+      if (!isPinSearch && c.locality && c.locality.toLowerCase().includes(q)) localitySet.add(c.locality);
+      if (!isPinSearch && c.address && c.address.toLowerCase().includes(q) && clientMatches.length < 5)
+        clientMatches.push({ type: "client", label: c.companyName, client: c });
+      if (!isPinSearch && c.fullAddress && c.fullAddress.toLowerCase().includes(q) && clientMatches.length < 5)
+        clientMatches.push({ type: "client", label: c.companyName, client: c });
     }
 
     const result: Suggestion[] = [...clientMatches];
+    for (const loc of [...localitySet].slice(0, 4)) result.push({ type: "locality", label: loc });
     for (const pin of [...pinSet].slice(0, 5)) result.push({ type: "pin", label: pin });
     for (const city of [...citySet].slice(0, 4)) result.push({ type: "city", label: city });
     for (const state of [...stateSet].slice(0, 3)) result.push({ type: "state", label: state });
@@ -360,13 +373,21 @@ export default function MapPage() {
     setShowSuggestions(false);
     if (s.type === "client") {
       setLocalFilterClients(null);
+      setLocalityFilter("");
       setSearchQuery(s.client.city);
       setCommittedSearch(s.client.city);
       setUserLocation(null);
       setSelectedClient(s.client);
       setMobileTab("map");
+    } else if (s.type === "locality") {
+      setLocalityFilter(s.label);
+      setLocalFilterClients(null);
+      setSearchQuery(s.label);
+      setUserLocation(null);
+      setSelectedClient(null);
     } else if (s.type === "city") {
       setLocalFilterClients(null);
+      setLocalityFilter("");
       setSearchQuery(s.label);
       setCommittedSearch(s.label);
       setUserLocation(null);
@@ -376,6 +397,7 @@ export default function MapPage() {
         (c) => c.state.toLowerCase() === s.label.toLowerCase()
       );
       setLocalFilterClients(filtered);
+      setLocalityFilter("");
       setSearchQuery(s.label);
       setUserLocation(null);
       setSelectedClient(null);
@@ -384,6 +406,7 @@ export default function MapPage() {
         (c) => c.fieldPerson.toLowerCase() === s.label.toLowerCase()
       );
       setLocalFilterClients(filtered);
+      setLocalityFilter("");
       setSearchQuery(s.label);
       setUserLocation(null);
       setSelectedClient(null);
@@ -392,6 +415,7 @@ export default function MapPage() {
         (c) => (c.computerPerson ?? "").toLowerCase() === s.label.toLowerCase()
       );
       setLocalFilterClients(filtered);
+      setLocalityFilter("");
       setSearchQuery(s.label);
       setUserLocation(null);
       setSelectedClient(null);
@@ -400,6 +424,7 @@ export default function MapPage() {
         (c) => c.pinCode === s.label
       );
       setLocalFilterClients(filtered);
+      setLocalityFilter("");
       setSearchQuery(s.label);
       setUserLocation(null);
       setSelectedClient(null);
@@ -467,11 +492,13 @@ export default function MapPage() {
               <div style="font-weight:700;font-size:14px;color:#0f172a;margin-bottom:2px;line-height:1.3;">${client.companyName}</div>
               <div style="font-size:10px;color:#94a3b8;font-family:monospace;margin-bottom:10px;">${client.companyCode}</div>
               <div style="display:grid;gap:5px;">
+                ${(client as Client).locality ? `<div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">Locality</span>${(client as Client).locality}</div>` : ""}
                 <div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">Area/City</span>${client.city}</div>
                 <div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">State</span>${client.state}</div>
                 <div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">PIN Code</span>${client.pinCode}</div>
                 ${(client as Client).address ? `<div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">Address</span>${(client as Client).address}</div>` : ""}
                 ${(client as Client).fullAddress ? `<div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">Full Addr</span>${(client as Client).fullAddress}</div>` : ""}
+                ${(client as Client).geoStatus ? `<div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">Geo Status</span>${(client as Client).geoStatus}</div>` : ""}
                 ${client.fieldPerson ? `<div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">Field</span>${client.fieldPerson}</div>` : ""}
                 ${client.computerPerson ? `<div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">Computer</span>${client.computerPerson}</div>` : ""}
               </div>
@@ -721,6 +748,7 @@ export default function MapPage() {
 
   const handleSearch = () => {
     setLocalFilterClients(null);
+    setLocalityFilter("");
     setCommittedSearch(searchQuery);
     setUserLocation(null);
     setSelectedClient(null);
@@ -730,6 +758,7 @@ export default function MapPage() {
   const handleClearLocation = () => {
     setUserLocation(null);
     setLocalFilterClients(null);
+    setLocalityFilter("");
     setSelectedClient(null);
     if (googleMapRef.current) {
       googleMapRef.current.setCenter(DELHI);
@@ -739,6 +768,7 @@ export default function MapPage() {
 
   const SUGGESTION_ICON: Record<string, React.ReactNode> = {
     client: <Building2 className="h-3 w-3 text-amber-500 shrink-0" />,
+    locality: <MapPin className="h-3 w-3 text-teal-500 shrink-0" />,
     city: <MapPin className="h-3 w-3 text-indigo-500 shrink-0" />,
     state: <MapPin className="h-3 w-3 text-blue-500 shrink-0" />,
     field: <User className="h-3 w-3 text-emerald-500 shrink-0" />,
@@ -747,6 +777,7 @@ export default function MapPage() {
   };
   const SUGGESTION_BADGE: Record<string, string> = {
     client: "bg-amber-50 text-amber-600",
+    locality: "bg-teal-50 text-teal-600",
     city: "bg-indigo-50 text-indigo-600",
     state: "bg-blue-50 text-blue-600",
     field: "bg-emerald-50 text-emerald-600",
@@ -755,6 +786,7 @@ export default function MapPage() {
   };
   const SUGGESTION_BADGE_LABEL: Record<string, string> = {
     client: "Client",
+    locality: "Locality",
     city: "City",
     state: "State",
     field: "Field",
@@ -827,6 +859,7 @@ export default function MapPage() {
                 key={city}
                 onClick={() => {
                   setLocalFilterClients(null);
+                  setLocalityFilter("");
                   setSearchQuery(city);
                   setCommittedSearch(city);
                   setUserLocation(null);
@@ -837,6 +870,45 @@ export default function MapPage() {
               >
                 {city}
                 <span className="text-slate-400 font-mono">{count}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Localities list */}
+      {!statsLoading && stats?.byLocality && stats.byLocality.length > 0 && (
+        <div>
+          <p className="text-[8px] text-slate-400 uppercase tracking-widest font-bold mb-1.5">Localities</p>
+          <div className="flex flex-wrap gap-1">
+            {(stats.byLocality as { locality: string; count: number }[]).map(({ locality, count }) => (
+              <button
+                key={locality}
+                onClick={() => {
+                  if (locality === "Locality Not Updated") {
+                    setLocalFilterClients(
+                      ((allClientsData as Client[]) ?? []).filter((c) => !c.locality || c.locality.trim() === "")
+                    );
+                    setLocalityFilter("");
+                  } else {
+                    setLocalityFilter(locality);
+                    setLocalFilterClients(null);
+                  }
+                  setSearchQuery(locality);
+                  setUserLocation(null);
+                  setSelectedClient(null);
+                  setShowStats(false);
+                }}
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 border rounded-md text-[9px] font-medium transition-colors cursor-pointer ${
+                  locality === "Locality Not Updated"
+                    ? "bg-slate-100 border-slate-300 text-slate-500 hover:bg-slate-200"
+                    : localityFilter === locality
+                      ? "bg-teal-100 border-teal-300 text-teal-700"
+                      : "bg-teal-50 border-teal-100 text-teal-700 hover:bg-teal-100"
+                }`}
+              >
+                {locality}
+                <span className="font-mono opacity-70">{count}</span>
               </button>
             ))}
           </div>
@@ -948,11 +1020,48 @@ export default function MapPage() {
         {locationError && <p className="text-[10px] text-red-500 px-1 leading-relaxed">{locationError}</p>}
         {localFilterClients && (
           <button
-            onClick={() => { setLocalFilterClients(null); setSearchQuery(""); setCommittedSearch("Delhi"); }}
+            onClick={() => { setLocalFilterClients(null); setLocalityFilter(""); setSearchQuery(""); setCommittedSearch("Delhi"); }}
             className="w-full flex items-center justify-center gap-1.5 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-[11px] font-medium hover:bg-amber-100 transition-colors"
           >
             <X className="h-3 w-3" /> Clear filter — {localFilterClients.length} clients shown
           </button>
+        )}
+        {localityFilter && !localFilterClients && (
+          <button
+            onClick={() => { setLocalityFilter(""); setSearchQuery(""); setCommittedSearch("Delhi"); }}
+            className="w-full flex items-center justify-center gap-1.5 py-2 bg-teal-50 text-teal-700 border border-teal-200 rounded-xl text-[11px] font-medium hover:bg-teal-100 transition-colors"
+          >
+            <X className="h-3 w-3" /> Locality: {localityFilter}
+          </button>
+        )}
+        {/* Locality dropdown */}
+        {stats?.byLocality && (stats.byLocality as { locality: string; count: number }[]).length > 0 && (
+          <select
+            value={localityFilter}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (!val) {
+                setLocalityFilter("");
+                setLocalFilterClients(null);
+                setCommittedSearch("Delhi");
+                setSearchQuery("");
+              } else {
+                setLocalityFilter(val);
+                setLocalFilterClients(null);
+                setSearchQuery(val);
+                setUserLocation(null);
+                setSelectedClient(null);
+              }
+            }}
+            className="w-full py-2 px-3 bg-slate-50 border border-slate-200 rounded-xl text-[12px] text-slate-700 focus:outline-none focus:border-teal-400 focus:ring-2 focus:ring-teal-100 transition-all"
+          >
+            <option value="">📍 All Localities</option>
+            {(stats.byLocality as { locality: string; count: number }[])
+              .filter(({ locality }) => locality !== "Locality Not Updated")
+              .map(({ locality, count }) => (
+                <option key={locality} value={locality}>{locality} ({count})</option>
+              ))}
+          </select>
         )}
         {/* Geo Status filter */}
         <div className="flex gap-1 flex-wrap">
@@ -1081,6 +1190,12 @@ export default function MapPage() {
 
           {/* Info cards */}
           <div className="p-3 space-y-2">
+            {selectedClient.locality && (
+              <div className="bg-teal-50 rounded-xl p-2.5 border border-teal-100">
+                <p className="text-[8px] text-teal-500 uppercase tracking-wider mb-0.5 flex items-center gap-1"><MapPin className="h-2 w-2" />Locality</p>
+                <p className="text-[11px] text-teal-700 font-semibold">{selectedClient.locality}</p>
+              </div>
+            )}
             <div className="flex gap-2">
               <div className="flex-1 bg-slate-50 rounded-xl p-2.5 border border-slate-100">
                 <p className="text-[8px] text-slate-400 uppercase tracking-wider mb-0.5 flex items-center gap-1"><MapPin className="h-2 w-2" />Area / City</p>
@@ -1203,6 +1318,12 @@ export default function MapPage() {
 
           {/* Scrollable info pills */}
           <div className="flex gap-2 px-4 pb-3 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+            {selectedClient.locality && (
+              <div className="flex-none flex items-center gap-1.5 px-3 py-2 bg-teal-50 border border-teal-100 rounded-2xl">
+                <MapPin className="h-3 w-3 text-teal-500 shrink-0" />
+                <span className="text-[11px] text-teal-700 font-semibold whitespace-nowrap">{selectedClient.locality}</span>
+              </div>
+            )}
             <div className="flex-none flex items-center gap-1.5 px-3 py-2 bg-slate-50 border border-slate-100 rounded-2xl">
               <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
               <span className="text-[11px] text-slate-600 font-medium whitespace-nowrap">{selectedClient.city}{selectedClient.state ? `, ${selectedClient.state}` : ""}</span>

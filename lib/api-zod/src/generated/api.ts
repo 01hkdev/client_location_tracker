@@ -26,6 +26,10 @@ export const ListClientsQueryParams = zod.object({
     .describe("Filter by city name (case-insensitive partial match)"),
   pinCode: zod.coerce.string().optional().describe("Filter by pin code"),
   status: zod.coerce.string().optional().describe("Filter by client status"),
+  locality: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter by locality (case-insensitive partial match)"),
 });
 
 export const ListClientsResponseItem = zod.object({
@@ -38,9 +42,9 @@ export const ListClientsResponseItem = zod.object({
   latitude: zod.number(),
   longitude: zod.number(),
   fieldPerson: zod.string(),
-  computerPerson: zod.string().optional(),
   status: zod.string(),
   createdAt: zod.string().optional(),
+  locality: zod.string().optional(),
   address: zod.string().optional(),
   fullAddress: zod.string().optional(),
   geoStatus: zod.string().optional(),
@@ -70,13 +74,13 @@ export const GetNearbyClientsResponseItem = zod.object({
   latitude: zod.number(),
   longitude: zod.number(),
   fieldPerson: zod.string(),
-  computerPerson: zod.string().optional(),
   status: zod.string(),
   createdAt: zod.string().optional(),
-  distanceKm: zod.number(),
+  locality: zod.string().optional(),
   address: zod.string().optional(),
   fullAddress: zod.string().optional(),
   geoStatus: zod.string().optional(),
+  distanceKm: zod.number(),
 });
 export const GetNearbyClientsResponse = zod.array(GetNearbyClientsResponseItem);
 
@@ -104,6 +108,12 @@ export const GetClientStatsResponse = zod.object({
       count: zod.number(),
     }),
   ),
+  byLocality: zod.array(
+    zod.object({
+      locality: zod.string(),
+      count: zod.number(),
+    }),
+  ),
 });
 
 /**
@@ -125,6 +135,7 @@ export const GetClientResponse = zod.object({
   fieldPerson: zod.string(),
   status: zod.string(),
   createdAt: zod.string().optional(),
+  locality: zod.string().optional(),
   address: zod.string().optional(),
   fullAddress: zod.string().optional(),
   geoStatus: zod.string().optional(),
