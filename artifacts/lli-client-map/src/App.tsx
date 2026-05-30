@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import MapPage from "@/pages/MapPage";
 import StaffPage from "@/pages/StaffPage";
+import DataQualityPage from "@/pages/DataQualityPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,6 +23,7 @@ function Router() {
     <Switch>
       <Route path="/" component={MapPage} />
       <Route path="/team" component={StaffPage} />
+      <Route path="/data-quality" component={DataQualityPage} />
       <Route component={NotFound} />
     </Switch>
   );

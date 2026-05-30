@@ -6,7 +6,7 @@ import {
   Search, MapPin, Navigation,
   X, Loader2, BarChart2,
   Car, Bike, ExternalLink, Clock, Route, User, Monitor, Building2,
-  Users, Hash,
+  Users, Hash, ShieldAlert,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -871,6 +871,14 @@ export default function MapPage() {
           >
             <Users className="h-3 w-3" />
             Team
+          </Link>
+          <Link
+            to="/data-quality"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white transition-colors text-[10px] font-bold shadow-sm shadow-amber-200"
+            title="Data Quality Checker"
+          >
+            <ShieldAlert className="h-3 w-3" />
+            Audit
           </Link>
           <button
             onClick={() => setShowStats(s => !s)}
