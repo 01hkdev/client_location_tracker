@@ -10,7 +10,7 @@ import {
   GetClientResponse,
 } from "@workspace/api-zod";
 import { ilike, eq, sql, and } from "drizzle-orm";
-import { getClientsFromSheet, type SheetClient } from "../lib/googleSheets.js";
+import { getClientsFromSheet, clearSheetCache, type SheetClient } from "../lib/googleSheets.js";
 
 const router: IRouter = Router();
 
@@ -185,6 +185,21 @@ router.get("/clients/:id", async (req, res): Promise<void> => {
   const [client] = await db.select().from(clientsTable).where(eq(clientsTable.id, params.data.id));
   if (!client) { res.status(404).json({ error: "Client not found" }); return; }
   res.json(GetClientResponse.parse({ ...client, createdAt: client.createdAt?.toISOString() }));
+});
+
+router.post("/admin/refresh", async (req, res) => {
+  if (!USE_SHEET) {
+    res.status(400).json({ error: "Google Sheets not configured" });
+    return;
+  }
+  clearSheetCache();
+  try {
+    await getClientsFromSheet();
+    res.json({ ok: true, message: "Sheet cache refreshed successfully" });
+  } catch (err) {
+    req.log.error({ err }, "Failed to refresh sheet cache");
+    res.status(500).json({ error: "Failed to refresh data from sheet" });
+  }
 });
 
 export default router;

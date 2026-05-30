@@ -2,11 +2,12 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Link } from "wouter";
 import { setOptions, importLibrary } from "@googlemaps/js-api-loader";
 import { useListClients, useGetNearbyClients, useGetClientStats } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Search, MapPin, Navigation,
   X, Loader2, BarChart2,
   Car, Bike, ExternalLink, Clock, Route, User, Monitor, Building2,
-  Users, Hash, FileText,
+  Users, Hash, FileText, RefreshCw,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -269,6 +270,10 @@ export default function MapPage() {
   const [routeInfo, setRouteInfo] = useState<{ distance: string; duration: string; mode: string } | null>(null);
   const [navLoading, setNavLoading] = useState(false);
   const [navError, setNavError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const queryClient = useQueryClient();
 
   const mapRef = useRef<HTMLDivElement>(null);
   const googleMapRef = useRef<google.maps.Map | null>(null);
@@ -746,6 +751,22 @@ export default function MapPage() {
     );
   };
 
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    setRefreshMsg(null);
+    try {
+      const res = await fetch("/api/admin/refresh", { method: "POST" });
+      if (!res.ok) throw new Error("Refresh failed");
+      await queryClient.invalidateQueries();
+      setRefreshMsg({ ok: true, text: "Data refreshed from sheet!" });
+    } catch {
+      setRefreshMsg({ ok: false, text: "Refresh failed. Try again." });
+    } finally {
+      setRefreshing(false);
+      setTimeout(() => setRefreshMsg(null), 4000);
+    }
+  };
+
   const handleSearch = () => {
     setLocalFilterClients(null);
     setLocalityFilter("");
@@ -988,6 +1009,14 @@ export default function MapPage() {
             Team
           </Link>
           <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="p-1.5 rounded-lg transition-colors text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 disabled:opacity-40"
+            title="Refresh data from Google Sheet"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+          </button>
+          <button
             onClick={() => setShowStats(s => !s)}
             className={`p-1.5 rounded-lg transition-colors ${showStats ? "bg-amber-100 text-amber-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"}`}
             title="Toggle stats"
@@ -996,6 +1025,13 @@ export default function MapPage() {
           </button>
         </div>
       </div>
+      {refreshMsg && (
+        <div className={`mx-4 mt-2 px-3 py-2 rounded-lg text-[11px] font-medium flex items-center gap-2 ${
+          refreshMsg.ok ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-red-50 text-red-600 border border-red-100"
+        }`}>
+          {refreshMsg.ok ? "✓" : "✗"} {refreshMsg.text}
+        </div>
+      )}
 
       {/* Search */}
       <div ref={searchWrapRef} className="px-3 py-3 shrink-0 border-b border-slate-100 space-y-2">
