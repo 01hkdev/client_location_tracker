@@ -6,7 +6,7 @@ import {
   Search, MapPin, Navigation,
   X, Loader2, BarChart2,
   Car, Bike, ExternalLink, Clock, Route, User, Monitor, Building2,
-  Users, Hash, ShieldAlert,
+  Users, Hash, FileText,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,6 +24,9 @@ type Client = {
   computerPerson?: string;
   status: string;
   createdAt?: string;
+  address?: string;
+  fullAddress?: string;
+  geoStatus?: string;
 };
 type ClientWithDistance = Client & { distanceKm: number };
 
@@ -185,6 +188,19 @@ function makeMarkerIcon(
   };
 }
 
+function GeoStatusBadge({ geoStatus }: { geoStatus?: string }) {
+  if (!geoStatus) return null;
+  const gs = geoStatus.toLowerCase();
+  if (gs.includes("done")) return null;
+  if (gs.includes("failed")) {
+    return <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-50 text-red-500 border border-red-100">📍 Failed</span>;
+  }
+  if (gs.includes("pending")) {
+    return <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-600 border border-amber-100">⏳ Pending</span>;
+  }
+  return null;
+}
+
 function ClientCard({ client, onClick, selected, distance }: {
   client: Client; onClick: () => void; selected: boolean; distance?: number;
 }) {
@@ -203,9 +219,13 @@ function ClientCard({ client, onClick, selected, distance }: {
           <p className="text-[10px] text-slate-400 mt-0.5 font-mono tracking-wide">{client.companyCode}</p>
           <div className="flex items-center gap-1 mt-1.5">
             <MapPin className="h-2.5 w-2.5 text-slate-400 shrink-0" />
-            <span className="text-[11px] text-slate-500 truncate">{client.city}, {client.state}</span>
+            <span className="text-[11px] text-slate-500 truncate">{client.city}{client.state ? `, ${client.state}` : ""}</span>
           </div>
-          <div className="flex gap-2 mt-1 flex-wrap">
+          {client.fullAddress && (
+            <p className="text-[10px] text-slate-400 truncate mt-0.5 pl-0.5">{client.fullAddress}</p>
+          )}
+          <div className="flex gap-2 mt-1 flex-wrap items-center">
+            <GeoStatusBadge geoStatus={client.geoStatus} />
             {client.fieldPerson && (
               <p className="text-[10px] text-slate-400 truncate">
                 <span className="text-slate-300 font-medium">Field:</span> {client.fieldPerson}
@@ -239,6 +259,7 @@ export default function MapPage() {
   const [mapError, setMapError] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"map" | "list">("map");
   const [showStats, setShowStats] = useState(false);
+  const [geoStatusFilter, setGeoStatusFilter] = useState<"all" | "done" | "failed" | "pending">("all");
   const [navMode, setNavMode] = useState<"DRIVING" | "TWO_WHEELER" | null>(null);
   const [routeInfo, setRouteInfo] = useState<{ distance: string; duration: string; mode: string } | null>(null);
   const [navLoading, setNavLoading] = useState(false);
@@ -281,6 +302,26 @@ export default function MapPage() {
       ? (Array.isArray(nearbyClients) ? nearbyClients : [])
       : (Array.isArray(rawClients) ? rawClients : []);
   }, [userLocation, nearbyClients, rawClients, localFilterClients]);
+
+  const listClients: (Client | ClientWithDistance)[] = useMemo(() => {
+    if (geoStatusFilter === "all") return allDisplayClients;
+    return allDisplayClients.filter((c) => {
+      const gs = ((c as Client).geoStatus ?? "").toLowerCase();
+      if (geoStatusFilter === "done") return gs.includes("done");
+      if (geoStatusFilter === "failed") return gs.includes("failed");
+      if (geoStatusFilter === "pending") return gs.includes("pending");
+      return true;
+    });
+  }, [allDisplayClients, geoStatusFilter]);
+
+  const mappableClients: (Client | ClientWithDistance)[] = useMemo(() => {
+    return allDisplayClients.filter((c) => {
+      const hasCoords = c.latitude !== 0 && c.longitude !== 0 && !isNaN(c.latitude) && !isNaN(c.longitude);
+      const gs = ((c as Client).geoStatus ?? "").toLowerCase();
+      const geoOk = gs === "" || gs.includes("done");
+      return hasCoords && geoOk;
+    });
+  }, [allDisplayClients]);
 
   // Build smart suggestions from typed query
   const suggestions: Suggestion[] = useMemo(() => {
@@ -426,11 +467,13 @@ export default function MapPage() {
               <div style="font-weight:700;font-size:14px;color:#0f172a;margin-bottom:2px;line-height:1.3;">${client.companyName}</div>
               <div style="font-size:10px;color:#94a3b8;font-family:monospace;margin-bottom:10px;">${client.companyCode}</div>
               <div style="display:grid;gap:5px;">
-                <div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:72px;">City</span>${client.city}</div>
-                <div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:72px;">State</span>${client.state}</div>
-                <div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:72px;">PIN Code</span>${client.pinCode}</div>
-                ${client.fieldPerson ? `<div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:72px;">Field</span>${client.fieldPerson}</div>` : ""}
-                ${client.computerPerson ? `<div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:72px;">Computer</span>${client.computerPerson}</div>` : ""}
+                <div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">Area/City</span>${client.city}</div>
+                <div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">State</span>${client.state}</div>
+                <div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">PIN Code</span>${client.pinCode}</div>
+                ${(client as Client).address ? `<div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">Address</span>${(client as Client).address}</div>` : ""}
+                ${(client as Client).fullAddress ? `<div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">Full Addr</span>${(client as Client).fullAddress}</div>` : ""}
+                ${client.fieldPerson ? `<div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">Field</span>${client.fieldPerson}</div>` : ""}
+                ${client.computerPerson ? `<div style="font-size:11px;color:#475569;"><span style="color:#94a3b8;font-weight:600;display:inline-block;width:80px;">Computer</span>${client.computerPerson}</div>` : ""}
               </div>
               ${dist}
             </div>
@@ -543,8 +586,8 @@ export default function MapPage() {
 
   useEffect(() => {
     if (!mapReady || !googleMapRef.current) return;
-    updateMarkers(allDisplayClients, selectedClient, !!userLocation);
-  }, [allDisplayClients, selectedClient, userLocation, mapReady, updateMarkers]);
+    updateMarkers(mappableClients, selectedClient, !!userLocation);
+  }, [mappableClients, selectedClient, userLocation, mapReady, updateMarkers]);
 
   useEffect(() => {
     if (!mapReady || !googleMapRef.current || typeof google === "undefined" || !google.maps) return;
@@ -743,7 +786,7 @@ export default function MapPage() {
           </div>
           <div className="bg-amber-50 rounded-xl p-2 border border-amber-100 text-center">
             <p className="text-[8px] text-amber-500 uppercase tracking-wider font-semibold mb-1">Shown</p>
-            <p className="text-lg font-bold text-amber-600 tabular-nums leading-none">{allDisplayClients.length}</p>
+            <p className="text-lg font-bold text-amber-600 tabular-nums leading-none">{listClients.length}</p>
           </div>
         </div>
       )}
@@ -872,14 +915,6 @@ export default function MapPage() {
             <Users className="h-3 w-3" />
             Team
           </Link>
-          <Link
-            to="/data-quality"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white transition-colors text-[10px] font-bold shadow-sm shadow-amber-200"
-            title="Data Quality Checker"
-          >
-            <ShieldAlert className="h-3 w-3" />
-            Audit
-          </Link>
           <button
             onClick={() => setShowStats(s => !s)}
             className={`p-1.5 rounded-lg transition-colors ${showStats ? "bg-amber-100 text-amber-600" : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"}`}
@@ -919,6 +954,25 @@ export default function MapPage() {
             <X className="h-3 w-3" /> Clear filter — {localFilterClients.length} clients shown
           </button>
         )}
+        {/* Geo Status filter */}
+        <div className="flex gap-1 flex-wrap">
+          {(["all", "done", "failed", "pending"] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => setGeoStatusFilter(f)}
+              className={`px-2 py-1 rounded-lg text-[9px] font-bold uppercase tracking-wide transition-colors ${
+                geoStatusFilter === f
+                  ? f === "done" ? "bg-green-100 text-green-700 border border-green-300"
+                    : f === "failed" ? "bg-red-100 text-red-700 border border-red-300"
+                    : f === "pending" ? "bg-amber-100 text-amber-700 border border-amber-300"
+                    : "bg-slate-800 text-white"
+                  : "bg-slate-50 text-slate-400 border border-slate-200 hover:bg-slate-100"
+              }`}
+            >
+              {f === "all" ? "All" : f === "done" ? "✅ Done" : f === "failed" ? "❌ Failed" : "⏳ Pending"}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Stats (collapsible) */}
@@ -930,7 +984,7 @@ export default function MapPage() {
           {userLocation ? "Nearby Clients" : localFilterClients ? `Filtered — ${searchQuery}` : committedSearch ? `Results — ${committedSearch}` : "All Clients"}
         </span>
         {!isLoading && (
-          <span className="text-[10px] text-slate-400 tabular-nums font-mono">{allDisplayClients.length}</span>
+          <span className="text-[10px] text-slate-400 tabular-nums font-mono">{listClients.length}</span>
         )}
       </div>
 
@@ -950,7 +1004,7 @@ export default function MapPage() {
               {committedSearch && <p className="text-[11px] text-slate-400 mt-1">Try a different search</p>}
             </div>
           ) : (
-            allDisplayClients.map((client) => (
+            listClients.map((client) => (
               <ClientCard
                 key={client.id}
                 client={client}
@@ -1029,9 +1083,9 @@ export default function MapPage() {
           <div className="p-3 space-y-2">
             <div className="flex gap-2">
               <div className="flex-1 bg-slate-50 rounded-xl p-2.5 border border-slate-100">
-                <p className="text-[8px] text-slate-400 uppercase tracking-wider mb-0.5 flex items-center gap-1"><MapPin className="h-2 w-2" />Location</p>
+                <p className="text-[8px] text-slate-400 uppercase tracking-wider mb-0.5 flex items-center gap-1"><MapPin className="h-2 w-2" />Area / City</p>
                 <p className="text-[11px] text-slate-700 font-medium">{selectedClient.city}</p>
-                <p className="text-[10px] text-slate-400">{selectedClient.state}</p>
+                <p className="text-[10px] text-slate-400">{selectedClient.state}{selectedClient.pinCode ? ` — ${selectedClient.pinCode}` : ""}</p>
               </div>
               <div className="flex gap-2">
                 {selectedClient.fieldPerson && (
@@ -1042,10 +1096,28 @@ export default function MapPage() {
                 )}
               </div>
             </div>
+            {selectedClient.address && (
+              <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
+                <p className="text-[8px] text-slate-400 uppercase tracking-wider mb-0.5 flex items-center gap-1"><Building2 className="h-2 w-2" />Company Address</p>
+                <p className="text-[11px] text-slate-700">{selectedClient.address}</p>
+              </div>
+            )}
+            {selectedClient.fullAddress && (
+              <div className="bg-blue-50 rounded-xl p-2.5 border border-blue-100">
+                <p className="text-[8px] text-blue-400 uppercase tracking-wider mb-0.5 flex items-center gap-1"><FileText className="h-2 w-2" />Full Address</p>
+                <p className="text-[11px] text-blue-700">{selectedClient.fullAddress}</p>
+              </div>
+            )}
             {selectedClient.computerPerson && (
               <div className="bg-violet-50 rounded-xl p-2.5 border border-violet-100">
                 <p className="text-[8px] text-violet-500 uppercase tracking-wider mb-0.5 flex items-center gap-1"><Monitor className="h-2 w-2" />Computer Person</p>
                 <p className="text-[11px] text-violet-700 font-semibold">{selectedClient.computerPerson}</p>
+              </div>
+            )}
+            {selectedClient.geoStatus && (
+              <div className={`rounded-xl p-2.5 border ${selectedClient.geoStatus.toLowerCase().includes("done") ? "bg-green-50 border-green-100" : selectedClient.geoStatus.toLowerCase().includes("failed") ? "bg-red-50 border-red-100" : "bg-amber-50 border-amber-100"}`}>
+                <p className={`text-[8px] uppercase tracking-wider mb-0.5 ${selectedClient.geoStatus.toLowerCase().includes("done") ? "text-green-500" : selectedClient.geoStatus.toLowerCase().includes("failed") ? "text-red-500" : "text-amber-500"}`}>Geo Status</p>
+                <p className={`text-[11px] font-semibold ${selectedClient.geoStatus.toLowerCase().includes("done") ? "text-green-700" : selectedClient.geoStatus.toLowerCase().includes("failed") ? "text-red-700" : "text-amber-700"}`}>{selectedClient.geoStatus}</p>
               </div>
             )}
           </div>
@@ -1133,8 +1205,20 @@ export default function MapPage() {
           <div className="flex gap-2 px-4 pb-3 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
             <div className="flex-none flex items-center gap-1.5 px-3 py-2 bg-slate-50 border border-slate-100 rounded-2xl">
               <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
-              <span className="text-[11px] text-slate-600 font-medium whitespace-nowrap">{selectedClient.city}, {selectedClient.state}</span>
+              <span className="text-[11px] text-slate-600 font-medium whitespace-nowrap">{selectedClient.city}{selectedClient.state ? `, ${selectedClient.state}` : ""}</span>
             </div>
+            {selectedClient.pinCode && (
+              <div className="flex-none flex items-center gap-1.5 px-3 py-2 bg-rose-50 border border-rose-100 rounded-2xl">
+                <Hash className="h-3 w-3 text-rose-400 shrink-0" />
+                <span className="text-[11px] text-rose-700 font-mono font-semibold whitespace-nowrap">{selectedClient.pinCode}</span>
+              </div>
+            )}
+            {selectedClient.fullAddress && (
+              <div className="flex-none flex items-center gap-1.5 px-3 py-2 bg-blue-50 border border-blue-100 rounded-2xl max-w-[220px]">
+                <FileText className="h-3 w-3 text-blue-400 shrink-0" />
+                <span className="text-[11px] text-blue-700 font-medium whitespace-nowrap truncate">{selectedClient.fullAddress}</span>
+              </div>
+            )}
             {selectedClient.fieldPerson && (
               <div className="flex-none flex items-center gap-1.5 px-3 py-2 bg-emerald-50 border border-emerald-100 rounded-2xl">
                 <User className="h-3 w-3 text-emerald-500 shrink-0" />
@@ -1145,6 +1229,11 @@ export default function MapPage() {
               <div className="flex-none flex items-center gap-1.5 px-3 py-2 bg-violet-50 border border-violet-100 rounded-2xl">
                 <Monitor className="h-3 w-3 text-violet-500 shrink-0" />
                 <span className="text-[11px] text-violet-700 font-semibold whitespace-nowrap">{selectedClient.computerPerson}</span>
+              </div>
+            )}
+            {selectedClient.geoStatus && !selectedClient.geoStatus.toLowerCase().includes("done") && (
+              <div className={`flex-none flex items-center gap-1.5 px-3 py-2 border rounded-2xl ${selectedClient.geoStatus.toLowerCase().includes("failed") ? "bg-red-50 border-red-100" : "bg-amber-50 border-amber-100"}`}>
+                <span className="text-[11px] font-semibold whitespace-nowrap">{selectedClient.geoStatus}</span>
               </div>
             )}
           </div>
@@ -1246,19 +1335,19 @@ export default function MapPage() {
                 <span className="text-[9px] text-slate-400 uppercase tracking-widest font-bold">
                   {userLocation ? "Nearby Clients" : localFilterClients ? `Filtered — ${searchQuery}` : committedSearch ? `Results — ${committedSearch}` : "All Clients"}
                 </span>
-                {!isLoading && <span className="text-[10px] text-slate-400 font-mono">{allDisplayClients.length}</span>}
+                {!isLoading && <span className="text-[10px] text-slate-400 font-mono">{listClients.length}</span>}
               </div>
               {isLoading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <Skeleton key={i} className="h-[76px] w-full rounded-xl mb-1.5 bg-slate-100" />
                 ))
-              ) : allDisplayClients.length === 0 ? (
+              ) : listClients.length === 0 ? (
                 <div className="text-center py-10">
                   <MapPin className="h-8 w-8 text-slate-200 mx-auto mb-2" />
                   <p className="text-[13px] text-slate-500">No clients found</p>
                 </div>
               ) : (
-                allDisplayClients.map((client) => (
+                listClients.map((client) => (
                   <ClientCard
                     key={client.id}
                     client={client}

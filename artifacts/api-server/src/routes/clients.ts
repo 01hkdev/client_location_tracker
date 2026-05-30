@@ -44,6 +44,9 @@ function sheetClientToApi(c: SheetClient) {
     computerPerson: c.computerPerson,
     status: c.status,
     createdAt: c.createdAt,
+    address: c.address,
+    fullAddress: c.fullAddress,
+    geoStatus: c.geoStatus,
   };
 }
 

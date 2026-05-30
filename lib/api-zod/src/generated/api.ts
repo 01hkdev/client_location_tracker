@@ -41,6 +41,9 @@ export const ListClientsResponseItem = zod.object({
   computerPerson: zod.string().optional(),
   status: zod.string(),
   createdAt: zod.string().optional(),
+  address: zod.string().optional(),
+  fullAddress: zod.string().optional(),
+  geoStatus: zod.string().optional(),
 });
 export const ListClientsResponse = zod.array(ListClientsResponseItem);
 
@@ -71,6 +74,9 @@ export const GetNearbyClientsResponseItem = zod.object({
   status: zod.string(),
   createdAt: zod.string().optional(),
   distanceKm: zod.number(),
+  address: zod.string().optional(),
+  fullAddress: zod.string().optional(),
+  geoStatus: zod.string().optional(),
 });
 export const GetNearbyClientsResponse = zod.array(GetNearbyClientsResponseItem);
 
@@ -119,4 +125,7 @@ export const GetClientResponse = zod.object({
   fieldPerson: zod.string(),
   status: zod.string(),
   createdAt: zod.string().optional(),
+  address: zod.string().optional(),
+  fullAddress: zod.string().optional(),
+  geoStatus: zod.string().optional(),
 });

@@ -18,4 +18,7 @@ export interface Client {
   fieldPerson: string;
   status: string;
   createdAt?: string;
+  address?: string;
+  fullAddress?: string;
+  geoStatus?: string;
 }

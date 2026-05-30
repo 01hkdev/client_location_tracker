@@ -16,6 +16,8 @@ export type SheetClient = {
   computerPerson: string;
   status: string;
   address: string;
+  fullAddress: string;
+  geoStatus: string;
   createdAt: string;
 };
 
@@ -66,38 +68,34 @@ export async function getClientsFromSheet(): Promise<SheetClient[]> {
     return -1;
   }
 
-  const statusIdx   = colIdx(["company status"]);
-  const snIdx       = colIdx(["s.no", "sno", "s.n"]);
-  const codeIdx     = colIdx(["company code"]);
-  const nameIdx     = colIdx(["company name"]);
-  const fieldIdx    = colIdx(["field person responsible", "field person"]);
-  const computerIdx = colIdx(["computer person responsible", "computer person"]);
-  const addressIdx  = colIdx(["company address"]);
-  const cityIdx     = colIdx(["city"]);
-  const stateIdx    = colIdx(["state"]);
-  const pinIdx      = colIdx(["pin code", "pincode"]);
-  const latIdx      = colIdx(["latitude"]);
-  const lngIdx      = colIdx(["longitude"]);
-  const geoIdx      = colIdx(["geo status"]);
-  const dateIdx     = colIdx(["company work start date", "work start date"]);
+  const statusIdx      = colIdx(["company status"]);
+  const snIdx          = colIdx(["s.no", "sno", "s.n"]);
+  const codeIdx        = colIdx(["company code"]);
+  const nameIdx        = colIdx(["company name"]);
+  const fieldIdx       = colIdx(["field person responsible", "field person"]);
+  const computerIdx    = colIdx(["computer person responsible", "computer person"]);
+  const addressIdx     = colIdx(["company address"]);
+  const cityIdx        = colIdx(["area/city", "area", "city"]);
+  const stateIdx       = colIdx(["state"]);
+  const pinIdx         = colIdx(["pin code", "pincode"]);
+  const fullAddressIdx = colIdx(["full address"]);
+  const latIdx         = colIdx(["latitude"]);
+  const lngIdx         = colIdx(["longitude"]);
+  const geoIdx         = colIdx(["geo status"]);
+  const dateIdx        = colIdx(["company work start date", "work start date"]);
 
   const clients: SheetClient[] = [];
   let id = 1;
 
   for (const row of rows) {
-    const latStr = latIdx >= 0 ? row[latIdx] ?? "" : "";
-    const lngStr = lngIdx >= 0 ? row[lngIdx] ?? "" : "";
-    const lat = parseFloat(latStr);
-    const lng = parseFloat(lngStr);
-    if (!latStr || !lngStr || isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) continue;
-
-    const geoStatus = geoIdx >= 0 ? (row[geoIdx] ?? "") : "";
-    if (geoIdx >= 0 && geoStatus && !geoStatus.toLowerCase().includes("done") && !geoStatus.toLowerCase().includes("pin")) continue;
-
     const rawStatus = statusIdx >= 0 ? (row[statusIdx] ?? "").trim().toLowerCase() : "active";
-    // Skip only CLOSED clients — fetch all others (ACTIVE, NIL, HOLD, PROSPECT, etc.)
     if (rawStatus === "closed") continue;
     const status = rawStatus || "active";
+
+    const latStr = latIdx >= 0 ? (row[latIdx] ?? "") : "";
+    const lngStr = lngIdx >= 0 ? (row[lngIdx] ?? "") : "";
+    const lat = latStr ? Number(latStr) : 0;
+    const lng = lngStr ? Number(lngStr) : 0;
 
     const sn = snIdx >= 0 ? row[snIdx] ?? "" : "";
     const code = codeIdx >= 0 ? row[codeIdx] ?? "" : "";
@@ -106,9 +104,13 @@ export async function getClientsFromSheet(): Promise<SheetClient[]> {
     const state = stateIdx >= 0 ? row[stateIdx] ?? "" : "";
     const pinCode = pinIdx >= 0 ? row[pinIdx] ?? "" : "";
     const address = addressIdx >= 0 ? row[addressIdx] ?? "" : "";
+    const fullAddress = fullAddressIdx >= 0 ? row[fullAddressIdx] ?? "" : "";
+    const geoStatus = geoIdx >= 0 ? row[geoIdx] ?? "" : "";
     const fieldPerson = fieldIdx >= 0 ? row[fieldIdx] ?? "" : "";
     const computerPerson = computerIdx >= 0 ? row[computerIdx] ?? "" : "";
     const createdAtRaw = dateIdx >= 0 ? row[dateIdx] ?? "" : "";
+
+    if (!code && !name && !city) continue;
 
     const finalCode = code || (sn ? `SN${sn.padStart(3, "0")}` : `CLT${String(id).padStart(3, "0")}`);
     const finalName = name || `${city} Client ${sn || id}`;
@@ -126,12 +128,14 @@ export async function getClientsFromSheet(): Promise<SheetClient[]> {
       city,
       state,
       pinCode,
-      latitude: lat,
-      longitude: lng,
+      latitude: isNaN(lat) ? 0 : lat,
+      longitude: isNaN(lng) ? 0 : lng,
       fieldPerson,
       computerPerson,
       status,
       address,
+      fullAddress,
+      geoStatus,
       createdAt,
     });
   }

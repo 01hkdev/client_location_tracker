@@ -19,4 +19,7 @@ export interface ClientWithDistance {
   status: string;
   createdAt?: string;
   distanceKm: number;
+  address?: string;
+  fullAddress?: string;
+  geoStatus?: string;
 }
